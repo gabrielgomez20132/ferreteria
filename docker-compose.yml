@@ -1,0 +1,45 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ferretero_web
+    restart: unless-stopped
+    ports:
+      # Puerto publicado para el nginx del server (proxy_pass a este host:9011).
+      # 9007, 9009 y 9010 ya los usan otros proyectos. Si 9011 está ocupado,
+      # cambiarlo acá y en el .conf del proxy.
+      - "9011:80"
+    volumes:
+      # El .env se monta como archivo, no con env_file. Si además se inyectan
+      # variables de entorno, Laravel las prioriza y un key:generate escrito
+      # en el archivo no se ve hasta recrear el contenedor.
+      - ./.env:/var/www/html/.env
+      # Código: git pull en el host se ve sin rebuild.
+      - ./app:/var/www/html/app
+      - ./resources:/var/www/html/resources
+      - ./routes:/var/www/html/routes
+      - ./config:/var/www/html/config
+      - ./database:/var/www/html/database
+      # Assets de Vite (npm run production). Van montados para que el deploy
+      # actualice el frontend sin rebuild, y para que un build de la imagen
+      # no deje el sitio sin CSS/JS.
+      - ./public/build:/var/www/html/public/build
+      # Archivos que no pueden desaparecer en `docker compose build`:
+      # listas de precios, exports y lo que se guarde en storage/app.
+      # No usar `docker compose down -v`: estos bind-mounts viven en el host,
+      # pero un volumen anónimo sí se borraría.
+      - ./storage/app:/var/www/html/storage/app
+      - ./storage/logs:/var/www/html/storage/logs
+      - ./storage/framework/sessions:/var/www/html/storage/framework/sessions
+    networks:
+      - proxy-network
+      - mysql-network
+
+networks:
+  proxy-network:
+    external: true
+    name: nginx-proxy_proxy-network
+  mysql-network:
+    external: true
+    name: mysql_default
