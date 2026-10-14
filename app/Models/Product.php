@@ -18,7 +18,7 @@ class Product extends Model
     protected $guarded = ['id'];
 
     /** Valores por defecto (coinciden con la base de datos) */
-    protected $attributes = ['is_active' => true, 'track_stock' => true, 'allow_fraction' => false, 'cost' => 0, 'markup' => 0, 'price' => 0, 'vat_rate' => 21, 'purchase_unit_factor' => 1, 'min_stock' => 0];
+    protected $attributes = ['type' => 'simple', 'has_variants' => false, 'is_active' => true, 'track_stock' => true, 'allow_fraction' => false, 'cost' => 0, 'markup' => 0, 'price' => 0, 'vat_rate' => 21, 'purchase_unit_factor' => 1, 'min_stock' => 0];
 
     protected function casts(): array
     {
@@ -36,6 +36,8 @@ class Product extends Model
             'min_stock' => 'decimal:3',
             'track_stock' => 'boolean',
             'is_active' => 'boolean',
+            'has_variants' => 'boolean',
+            'variant_attributes' => 'array',
         ];
     }
 
@@ -57,6 +59,39 @@ class Product extends Model
     public function supplier(): BelongsTo
     {
         return $this->belongsTo(Supplier::class);
+    }
+
+    /** Insumos del kit o del producto fabricado */
+    public function components(): HasMany
+    {
+        return $this->hasMany(ProductComponent::class);
+    }
+
+    /** Kits / productos fabricados que usan este producto como insumo */
+    public function usedIn(): HasMany
+    {
+        return $this->hasMany(ProductComponent::class, 'component_id');
+    }
+
+    public function variants(): HasMany
+    {
+        return $this->hasMany(Product::class, 'variant_of_id');
+    }
+
+    public function variantOf(): BelongsTo
+    {
+        return $this->belongsTo(Product::class, 'variant_of_id');
+    }
+
+    /** Productos que se pueden vender / comprar (excluye los "modelos" agrupadores de variantes) */
+    public function scopeSellable(Builder $q): Builder
+    {
+        return $q->where('products.is_active', true)->where('products.has_variants', false);
+    }
+
+    public function isKit(): bool
+    {
+        return $this->type === 'kit';
     }
 
     public function codes(): HasMany

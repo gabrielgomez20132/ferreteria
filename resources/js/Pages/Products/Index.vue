@@ -59,6 +59,9 @@ const toggle = (id) => {
                         <td><input type="checkbox" class="checkbox" :checked="selected.has(p.id)" @change="toggle(p.id)" :aria-label="'Seleccionar ' + p.name" /></td>
                         <td>
                             <Link :href="route('products.show', p.id)" class="font-medium link">{{ p.name }}</Link>
+                            <span v-if="p.type === 'kit'" class="badge-warn ml-1.5">Kit</span>
+                            <span v-else-if="p.type === 'manufactured'" class="badge-warn ml-1.5">Fabricado</span>
+                            <span v-if="p.has_variants" class="badge-blue ml-1.5">{{ p.variants_count }} variantes</span>
                             <div class="code">{{ p.code }}<span v-if="p.barcode"> · {{ p.barcode }}</span></div>
                         </td>
                         <td class="text-steel-600">{{ p.category ?? '—' }}<div class="text-xs text-steel-400">{{ p.brand }}</div></td>

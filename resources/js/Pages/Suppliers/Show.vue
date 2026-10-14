@@ -12,7 +12,7 @@ import SupplierModal from '@/Components/SupplierModal.vue';
 import { money, date, datetime } from '@/lib/format';
 import { useCan } from '@/lib/can';
 
-const props = defineProps({ supplier: Object, products: Object, movements: Object, imports: Array, purchases: Array, methods: Object, filters: Object });
+const props = defineProps({ supplier: Object, products: Object, movements: Object, imports: Array, purchases: Array, methods: Object, filters: Object, rules: Array, brands: Array, categories: Array, pendingPurchases: Array, paymentOrders: Array });
 const can = useCan();
 const tab = ref('products');
 const showEdit = ref(false);
@@ -29,6 +29,18 @@ const editSp = (sp) => {
 };
 const saveSp = () => spForm.put(route('suppliers.products.update', [props.supplier.id, editing.value.id]), { preserveScroll: true, onSuccess: () => (editing.value = null) });
 const removeSp = (sp) => confirm('¿Quitar el vínculo con este artículo?') && router.delete(route('suppliers.products.destroy', [props.supplier.id, sp.id]), { preserveScroll: true });
+// bonificaciones por marca / categoría
+const showRule = ref(false);
+const ruleForm = useForm({ id: null, brand_id: '', category_id: '', discount_1: 0, discount_2: 0, discount_3: 0, notes: '' });
+const openRule = (r = null) => {
+    Object.assign(ruleForm, { id: r?.id ?? null, brand_id: r?.brand_id ?? '', category_id: r?.category_id ?? '', discount_1: r?.discount_1 ?? 0, discount_2: r?.discount_2 ?? 0, discount_3: r?.discount_3 ?? 0, notes: r?.notes ?? '' });
+    showRule.value = true;
+};
+const saveRule = () => ruleForm.transform((d) => ({ ...d, brand_id: d.brand_id || null, category_id: d.category_id || null })).post(route('suppliers.rules.store', props.supplier.id), { preserveScroll: true, onSuccess: () => (showRule.value = false) });
+const removeRule = (r) => confirm('¿Eliminar esta bonificación?') && router.delete(route('suppliers.rules.destroy', [props.supplier.id, r.id]), { preserveScroll: true });
+const fmtDisc = (r) => [r.discount_1, r.discount_2, r.discount_3].map(Number).filter((x) => x).map((x) => x + '%').join(' + ') || '0%';
+const pendingTotal = props.pendingPurchases.reduce((a, p) => a + Number(p.total) - Number(p.paid_amount), 0);
+
 const disc = [props.supplier.discount_1, props.supplier.discount_2, props.supplier.discount_3].map(Number).filter((x) => x);
 </script>
 
@@ -43,7 +55,8 @@ const disc = [props.supplier.discount_1, props.supplier.discount_2, props.suppli
         <Link v-if="can('prices.manage')" :href="route('price-imports.index', { supplier_id: supplier.id })" class="btn-secondary"><FileSpreadsheet class="size-4" /> Actualizar lista</Link>
         <Link v-if="can('purchases.manage')" :href="route('purchases.create')" class="btn-secondary"><ShoppingBag class="size-4" /> Cargar compra</Link>
         <button v-if="can('suppliers.manage')" class="btn-secondary" @click="showEdit = true"><Pencil class="size-4" /> Editar</button>
-        <button v-if="can('suppliers.manage')" class="btn-primary" @click="showPay = true"><HandCoins class="size-4" /> Registrar pago</button>
+        <button v-if="can('suppliers.manage')" class="btn-secondary" @click="showPay = true"><HandCoins class="size-4" /> Pago rápido</button>
+        <Link v-if="can('suppliers.manage')" :href="route('payment-orders.create', { supplier_id: supplier.id })" class="btn-primary">Orden de pago</Link>
     </PageHeader>
 
     <div class="mb-4 flex gap-4 text-sm">
@@ -52,7 +65,7 @@ const disc = [props.supplier.discount_1, props.supplier.discount_2, props.suppli
     </div>
 
     <div class="mb-3 flex gap-1 border-b border-steel-200">
-        <button v-for="(l, k) in { products: 'Artículos y costos', account: 'Cuenta corriente', history: 'Listas y compras' }" :key="k" class="-mb-px border-b-2 px-3 py-2 text-sm" :class="tab === k ? 'border-hazard-500 font-medium' : 'border-transparent text-steel-500'" @click="tab = k">{{ l }}</button>
+        <button v-for="(l, k) in { products: 'Artículos y costos', rules: 'Bonificaciones especiales', account: 'Cuenta corriente', history: 'Listas y compras' }" :key="k" class="-mb-px border-b-2 px-3 py-2 text-sm" :class="tab === k ? 'border-hazard-500 font-medium' : 'border-transparent text-steel-500'" @click="tab = k">{{ l }}</button>
     </div>
 
     <div v-show="tab === 'products'" class="panel">
@@ -86,6 +99,49 @@ const disc = [props.supplier.discount_1, props.supplier.discount_2, props.suppli
         <Pagination :data="products" />
     </div>
 
+    <div v-show="tab === 'rules'" class="panel">
+        <div class="panel-head">
+            <div>
+                <h2 class="panel-title">Bonificaciones por marca o categoría</h2>
+                <p class="text-xs text-steel-500">Tienen prioridad sobre la bonificación general ({{ disc.length ? disc.join('% + ') + '%' : 'ninguna' }}). Si el artículo tiene su propia bonificación, se usa esa.</p>
+            </div>
+            <button v-if="can('suppliers.manage')" class="btn-secondary btn-sm" @click="openRule()">Agregar</button>
+        </div>
+        <table class="table">
+            <thead><tr><th>Marca</th><th>Categoría</th><th>Bonificación</th><th>Nota</th><th></th></tr></thead>
+            <tbody>
+                <tr v-for="r in rules" :key="r.id">
+                    <td>{{ r.brand?.name ?? 'Todas' }}</td><td>{{ r.category?.name ?? 'Todas' }}</td><td class="font-medium">{{ fmtDisc(r) }}</td><td class="text-steel-600">{{ r.notes }}</td>
+                    <td class="text-right whitespace-nowrap"><template v-if="can('suppliers.manage')"><button class="text-xs link" @click="openRule(r)">Editar</button><button class="ml-3 text-xs text-up hover:underline" @click="removeRule(r)">Eliminar</button></template></td>
+                </tr>
+                <tr v-if="!rules.length"><td colspan="5" class="py-6 text-center text-steel-500">Sin bonificaciones especiales. Ej.: "Fischer 25%" o "Herramientas eléctricas 8% + 5%".</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div v-show="tab === 'account'" class="mb-4 grid gap-4 lg:grid-cols-2">
+        <div class="panel">
+            <div class="panel-head"><h2 class="panel-title">Facturas pendientes de pago</h2><span class="text-sm font-semibold tabular-nums text-up">{{ money(pendingTotal) }}</span></div>
+            <table class="table"><tbody>
+                <tr v-for="p in pendingPurchases" :key="p.id">
+                    <td><Link :href="route('purchases.show', p.id)" class="link">{{ p.voucher_type }} {{ p.voucher_number || 's/n' }}</Link><div class="code">{{ date(p.date) }}</div></td>
+                    <td :class="p.due_date && new Date(p.due_date) < new Date() ? 'text-up' : ''">vence {{ date(p.due_date) }}</td>
+                    <td class="num font-medium">{{ money(Number(p.total) - Number(p.paid_amount)) }}</td>
+                </tr>
+                <tr v-if="!pendingPurchases.length"><td class="text-steel-500">No hay facturas pendientes.</td></tr>
+            </tbody></table>
+        </div>
+        <div class="panel">
+            <div class="panel-head"><h2 class="panel-title">Órdenes de pago</h2><Link :href="route('payment-orders.index', { supplier_id: supplier.id })" class="text-sm link">Ver todas</Link></div>
+            <table class="table"><tbody>
+                <tr v-for="o in paymentOrders" :key="o.id">
+                    <td><Link :href="route('payment-orders.show', o.id)" class="link">#{{ o.number }}</Link></td><td>{{ date(o.date) }}</td>
+                    <td class="num">{{ money(o.total) }}</td><td><StatusBadge :status="o.status" /></td>
+                </tr>
+                <tr v-if="!paymentOrders.length"><td class="text-steel-500">Sin órdenes de pago.</td></tr>
+            </tbody></table>
+        </div>
+    </div>
     <div v-show="tab === 'account'" class="panel">
         <table class="table">
             <thead><tr><th>Fecha</th><th>Concepto</th><th>Vence</th><th class="num">Debe</th><th class="num">Pago</th><th class="num">Saldo</th></tr></thead>
@@ -135,6 +191,20 @@ const disc = [props.supplier.discount_1, props.supplier.discount_2, props.suppli
 
     <SupplierModal :show="showEdit" :supplier="supplier" @close="showEdit = false" />
 
+    <Modal :show="showRule" :title="ruleForm.id ? 'Editar bonificación' : 'Nueva bonificación especial'" @close="showRule = false">
+        <div class="grid grid-cols-2 gap-3">
+            <Field label="Marca"><select v-model="ruleForm.brand_id" class="input"><option value="">Todas</option><option v-for="b in brands" :key="b.id" :value="b.id">{{ b.name }}</option></select></Field>
+            <Field label="Categoría"><select v-model="ruleForm.category_id" class="input"><option value="">Todas</option><option v-for="c in categories" :key="c.id" :value="c.id">{{ c.name }}</option></select></Field>
+        </div>
+        <div class="mt-3 grid grid-cols-3 gap-2">
+            <Field label="Bonif. 1 %" :error="ruleForm.errors.discount_1"><input v-model="ruleForm.discount_1" type="number" step="0.01" class="input" /></Field>
+            <Field label="Bonif. 2 %"><input v-model="ruleForm.discount_2" type="number" step="0.01" class="input" /></Field>
+            <Field label="Bonif. 3 %"><input v-model="ruleForm.discount_3" type="number" step="0.01" class="input" /></Field>
+        </div>
+        <Field class="mt-3" label="Nota (ej.: acuerdo vigente hasta diciembre)"><input v-model="ruleForm.notes" class="input" /></Field>
+        <template #footer><button class="btn-secondary" @click="showRule = false">Cancelar</button><button class="btn-primary" :disabled="ruleForm.processing" @click="saveRule">Guardar</button></template>
+    </Modal>
+
     <Modal :show="showPay" title="Pago a proveedor" @close="showPay = false">
         <div class="grid grid-cols-2 gap-3">
             <Field label="Importe" :error="pay.errors.amount"><input v-model="pay.amount" type="number" step="0.01" min="0" class="input" /></Field>
@@ -142,6 +212,7 @@ const disc = [props.supplier.discount_1, props.supplier.discount_2, props.suppli
             <Field class="col-span-2" label="Observaciones"><input v-model="pay.notes" class="input" /></Field>
         </div>
         <label class="mt-3 flex items-center gap-2 text-sm"><input v-model="pay.from_cash" type="checkbox" class="checkbox" /> Sale de mi caja abierta</label>
+        <p class="mt-2 text-xs text-steel-500">Se genera una orden de pago imputada a las facturas más viejas. Para pagar con varios medios o cheques usá "Orden de pago".</p>
         <template #footer>
             <button class="btn-secondary" @click="showPay = false">Cancelar</button>
             <button class="btn-primary" :disabled="pay.processing || !pay.amount" @click="doPay">Registrar pago</button>

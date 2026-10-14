@@ -1,6 +1,7 @@
 <script setup>
 import { computed, reactive } from 'vue';
 import { Link, router } from '@inertiajs/vue3';
+import { Wand2 } from '@lucide/vue';
 import PageHeader from '@/Components/PageHeader.vue';
 import { money, qty } from '@/lib/format';
 import { useCan } from '@/lib/can';
@@ -9,6 +10,9 @@ const props = defineProps({ items: Array, suppliers: Array, filters: Object });
 const can = useCan();
 const qtys = reactive(Object.fromEntries(props.items.map((i) => [i.id, i.suggested_quantity])));
 const picked = reactive(new Set(props.items.map((i) => i.id)));
+const autoOrders = () =>
+    confirm('Se crea un pedido en borrador por proveedor con todo lo que está bajo mínimo (descontando lo ya pedido). ¿Continuar?') &&
+    router.post(route('purchases.auto-orders'), { supplier_id: props.filters.supplier_id || undefined });
 const toggle = (id) => (picked.has(id) ? picked.delete(id) : picked.add(id));
 const orderUrl = computed(() => {
     const items = {};
@@ -22,9 +26,10 @@ const orderUrl = computed(() => {
         <select class="input w-auto" v-sel="filters.supplier_id ?? ''" @change="router.get(route('purchases.suggestions'), { supplier_id: $event.target.value || undefined })">
             <option value="">Todos los proveedores</option><option v-for="s in suppliers" :key="s.id" :value="s.id">{{ s.name }}</option>
         </select>
-        <Link v-if="can('purchases.manage') && filters.supplier_id && picked.size" :href="orderUrl" class="btn-primary">Armar pedido ({{ picked.size }})</Link>
+        <Link v-if="can('purchases.manage') && filters.supplier_id && picked.size" :href="orderUrl" class="btn-secondary">Armar pedido con la selección ({{ picked.size }})</Link>
+        <button v-if="can('purchases.manage') && items.length" class="btn-primary" @click="autoOrders"><Wand2 class="size-4" /> Generar pedidos automáticos</button>
     </PageHeader>
-    <p v-if="!filters.supplier_id" class="mb-3 text-sm text-steel-500">Elegí un proveedor para armar el pedido con sus artículos.</p>
+    <p v-if="!filters.supplier_id" class="mb-3 text-sm text-steel-500">"Generar pedidos automáticos" arma un pedido por proveedor (el principal de cada producto o el más barato). Para elegir artículos a mano, filtrá por proveedor.</p>
     <div class="panel overflow-x-auto">
         <table class="table">
             <thead><tr><th class="w-8"></th><th>Producto</th><th>Proveedor</th><th class="num">Stock</th><th class="num">Mínimo</th><th class="num">Vendido 30 días</th><th>Mejor costo</th><th class="num w-32">Pedir</th></tr></thead>

@@ -9,6 +9,7 @@ use App\Models\Category;
 use App\Models\Customer;
 use App\Models\Plan;
 use App\Models\Product;
+use App\Models\ProductStock;
 use App\Models\Role;
 use App\Models\Sale;
 use App\Models\Supplier;
@@ -238,13 +239,15 @@ class DemoTenantSeeder extends Seeder
         \Illuminate\Support\Carbon::setTestNow();
 
         // Gastos operativos de los últimos 3 meses
-        $cats = \App\Models\ExpenseCategory::pluck('id', 'name');
+        $expCats = \App\Models\ExpenseCategory::pluck('id', 'name');
         foreach ([2, 1, 0] as $m) {
             $d = $base->copy()->subMonthsNoOverflow($m)->startOfMonth()->addDays(4)->toDateString();
             foreach ([['Alquiler', 'Alquiler del local', 850000], ['Sueldos', 'Sueldos del personal', 1900000], ['Servicios', 'Luz, agua e internet', 145000], ['Impuestos', 'Ingresos brutos', 210000]] as [$c, $desc, $amount]) {
-                \App\Models\Expense::create(['branch_id' => $main->id, 'expense_category_id' => $cats[$c], 'user_id' => $admin->id, 'date' => $d, 'description' => $desc, 'amount' => $amount * (1 + $m * -0.03), 'payment_method' => 'transfer']);
+                \App\Models\Expense::create(['branch_id' => $main->id, 'expense_category_id' => $expCats[$c], 'user_id' => $admin->id, 'date' => $d, 'description' => $desc, 'amount' => $amount * (1 + $m * -0.03), 'payment_method' => 'transfer']);
             }
         }
+
+        $this->seedAdvanced($main, $suppliers, $cats, $brands, $units, $admin);
 
         $this->writeSampleSupplierList($suppliers['Distribuidora Norte']);
     }
@@ -296,5 +299,83 @@ class DemoTenantSeeder extends Seeder
         $dir = public_path('ejemplos');
         @mkdir($dir, 0775, true);
         (new Xlsx($sheet))->save($dir.'/lista-distribuidora-norte.xlsx');
+    }
+
+    /** Depósito, kit, producto fabricado, variantes, bonificación por marca, compras con orden de pago y producción */
+    private function seedAdvanced(Branch $main, array $suppliers, array $cats, $brands, $units, User $admin): void
+    {
+        $pricing = app(PricingService::class);
+        $stock = app(StockService::class);
+        $structure = app(\App\Services\ProductStructureService::class);
+
+        Branch::create(['name' => 'Depósito Central', 'code' => 'DEP1', 'type' => 'warehouse', 'address' => 'Ruta 9 km 695']);
+
+        $mk = function (array $a, float $qty = 0) use ($pricing, $stock, $main) {
+            $cost = $a['cost'];
+            $p = Product::create($a + ['average_cost' => $cost, 'vat_rate' => 21, 'price' => $pricing->priceFromCost($cost, $a['markup'], 21),
+                'cost_updated_at' => now(), 'price_updated_at' => now()]);
+            if ($qty) {
+                $stock->move($p, $main->id, $qty, 'initial', null, $cost, 'Stock inicial demo');
+            }
+
+            return $p;
+        };
+        $el = $cats['Electricidad']->id;
+        $ficha = $mk(['code' => 'FIC-MAC', 'name' => 'Ficha macho 10A', 'category_id' => $el, 'unit_id' => $units['un'], 'supplier_id' => $suppliers['Electro Mayorista']->id, 'cost' => 620, 'markup' => 45, 'min_stock' => 10], 40);
+        $hembra = $mk(['code' => 'TOM-HEM', 'name' => 'Toma hembra de prolongación 10A', 'category_id' => $el, 'unit_id' => $units['un'], 'supplier_id' => $suppliers['Electro Mayorista']->id, 'cost' => 780, 'markup' => 45, 'min_stock' => 10], 4);
+
+        // Producto fabricado: alargue armado en el local
+        $taller = Product::where('code', 'TAP-2X1')->first();
+        $alargue = $mk(['code' => 'ALG-5M', 'name' => 'Alargue armado 5 m (cable taller 2x1)', 'type' => 'manufactured', 'category_id' => $el, 'unit_id' => $units['un'], 'cost' => 0, 'markup' => 60, 'min_stock' => 3], 0);
+        $structure->syncComponents($alargue, [['component_id' => $taller->id, 'quantity' => 5], ['component_id' => $ficha->id, 'quantity' => 1], ['component_id' => $hembra->id, 'quantity' => 1]]);
+        $c = $structure->componentsCost($alargue->fresh());
+        $alargue->update(['cost' => $c, 'average_cost' => $c, 'price' => $pricing->priceFromCost($c, 60, 21)]);
+        \App\Models\ProductionOrder::create(['branch_id' => $main->id, 'product_id' => $alargue->id, 'user_id' => $admin->id, 'number' => 1, 'quantity' => 6,
+            'due_date' => now()->addDays(2)->toDateString(), 'status' => 'pending', 'notes' => 'Para la vidriera']);
+
+        // Kit: se vende como una unidad y descuenta cada componente
+        $kit = $mk(['code' => 'KIT-TOMA', 'name' => 'Kit instalación de toma (toma + llave + cinta)', 'type' => 'kit', 'category_id' => $el, 'cost' => 0, 'markup' => 35, 'track_stock' => false], 0);
+        $structure->syncComponents($kit, [
+            ['component_id' => Product::where('code', 'TOM-DOB')->value('id'), 'quantity' => 1],
+            ['component_id' => Product::where('code', 'LLA-PUN')->value('id'), 'quantity' => 1],
+            ['component_id' => Product::where('code', 'CIN-AIS')->value('id'), 'quantity' => 1],
+        ]);
+        $c = $structure->componentsCost($kit->fresh());
+        $kit->update(['cost' => $c, 'average_cost' => $c, 'price' => $pricing->priceFromCost($c, 35, 21)]);
+
+        // Variantes: un modelo con color y envase
+        $latex = $mk(['code' => 'LAT-EXT', 'name' => 'Látex exterior', 'category_id' => $cats['Pinturería']->id, 'brand_id' => $brands['Alba']->id, 'unit_id' => $units['un'],
+            'supplier_id' => $suppliers['Pinturerías Unidas']->id, 'cost' => 18000, 'markup' => 35, 'min_stock' => 2], 0);
+        $structure->generateVariants($latex, ['Color' => ['Blanco', 'Gris', 'Verde'], 'Envase' => ['4 L', '10 L']]);
+        foreach ($latex->variants()->get() as $i => $v) {
+            if (str_contains($v->name, '10 L')) {
+                $v->update(['cost' => 41000, 'price' => $pricing->priceFromCost(41000, 35, 21)]);
+            }
+            $stock->move($v, $main->id, [6, 3, 2, 1, 4, 0][$i] ?? 2, 'initial', null, (float) $v->cost, 'Stock inicial demo');
+        }
+
+        // Bonificación especial: Distribuidora Norte da 15% extra en Fischer
+        \App\Models\SupplierDiscountRule::create(['supplier_id' => $suppliers['Distribuidora Norte']->id, 'brand_id' => $brands['Fischer']->id,
+            'discount_1' => 15, 'discount_2' => 5, 'notes' => 'Acuerdo anual Fischer']);
+
+        // Máximos de stock (para la alerta de sobrestock)
+        ProductStock::where('branch_id', $main->id)->whereIn('product_id', Product::whereIn('code', ['TAR-6', 'ARA-6', 'TOR-6X40'])->pluck('id'))->update(['max_stock' => 20]);
+
+        // Compras a Electro Mayorista y una orden de pago parcial
+        $ps = app(\App\Services\PurchaseService::class);
+        $buy = fn ($days, $num, $code, $qty) => $ps->create([
+            'supplier_id' => $suppliers['Electro Mayorista']->id, 'voucher_type' => 'FA', 'voucher_number' => $num,
+            'date' => now()->subDays($days)->toDateString(), 'due_date' => now()->subDays($days - 15)->toDateString(),
+            'update_costs' => true, 'price_action' => 'keep_markup',
+            'items' => [['product_id' => Product::where('code', $code)->value('id'), 'quantity' => $qty, 'unit_factor' => 1,
+                'unit_cost' => (float) Product::where('code', $code)->value('cost'), 'discount_percent' => 0, 'vat_rate' => 21]],
+        ]);
+        $buy(40, '0003-00011020', 'LAM-LED9', 50);
+        $buy(12, '0003-00011388', 'TER-2X16', 10);
+        app(\App\Services\PaymentOrderService::class)->create([
+            'supplier_id' => $suppliers['Electro Mayorista']->id, 'date' => now()->subDays(5)->toDateString(),
+            'lines' => [['method' => 'transfer', 'amount' => 60000, 'reference' => 'TRF 88213', 'bank' => 'Banco Nación'],
+                ['method' => 'check', 'amount' => 25000, 'reference' => '00451238', 'bank' => 'Banco Galicia', 'check_date' => now()->addDays(25)->toDateString()]],
+        ]);
     }
 }

@@ -9,10 +9,10 @@ import Field from '@/Components/Field.vue';
 defineProps({ branches: Array });
 const editing = ref(null);
 const show = ref(false);
-const form = useForm({ name: '', code: '', address: '', phone: '', is_main: false, is_active: true });
+const form = useForm({ name: '', code: '', type: 'store', address: '', phone: '', is_main: false, is_active: true });
 const open = (b = null) => {
     editing.value = b;
-    Object.assign(form, { name: b?.name ?? '', code: b?.code ?? '', address: b?.address ?? '', phone: b?.phone ?? '', is_main: !!b?.is_main, is_active: b?.is_active ?? true });
+    Object.assign(form, { name: b?.name ?? '', code: b?.code ?? '', type: b?.type ?? 'store', address: b?.address ?? '', phone: b?.phone ?? '', is_main: !!b?.is_main, is_active: b?.is_active ?? true });
     show.value = true;
 };
 const save = () => {
@@ -27,17 +27,19 @@ const toggleRegister = (r) => router.put(route('registers.update', r.id), { name
 </script>
 
 <template>
-    <PageHeader title="Sucursales y cajas"><button class="btn-primary" @click="open()"><Plus class="size-4" /> Nueva sucursal</button></PageHeader>
+    <PageHeader title="Sucursales y depósitos" subtitle="Las sucursales venden y tienen cajas. Los depósitos solo guardan stock: reciben compras y transferencias, y no pueden vender.">
+        <button class="btn-primary" @click="open()"><Plus class="size-4" /> Nueva sucursal o depósito</button>
+    </PageHeader>
     <div class="grid gap-4 lg:grid-cols-2">
         <div v-for="b in branches" :key="b.id" class="panel" :class="!b.is_active && 'opacity-60'">
             <div class="panel-head">
                 <div>
-                    <h2 class="panel-title">{{ b.name }} <span v-if="b.is_main" class="badge-down ml-1">Casa central</span><span v-if="!b.is_active" class="badge-gray ml-1">Inactiva</span></h2>
+                    <h2 class="panel-title">{{ b.name }} <span v-if="b.type === 'warehouse'" class="badge-blue ml-1">Depósito</span> <span v-if="b.is_main" class="badge-down ml-1">Casa central</span><span v-if="!b.is_active" class="badge-gray ml-1">Inactiva</span></h2>
                     <div class="text-xs text-steel-500">{{ b.code }} · {{ b.address || 'sin dirección' }} · {{ b.users_count }} usuarios asignados</div>
                 </div>
                 <button class="btn-secondary btn-sm" @click="open(b)">Editar</button>
             </div>
-            <div class="p-4">
+            <div v-if="b.type !== 'warehouse'" class="p-4">
                 <div class="mb-2 flex items-center justify-between text-sm font-medium">Cajas <button class="btn-ghost btn-sm" @click="addRegister(b)"><Plus class="size-3.5" /> Caja</button></div>
                 <div v-for="r in b.cash_registers" :key="r.id" class="flex items-center justify-between border-t border-steel-100 py-1.5 text-sm">
                     <span :class="!r.is_active && 'text-steel-400 line-through'">{{ r.name }}</span>
@@ -46,8 +48,11 @@ const toggleRegister = (r) => router.put(route('registers.update', r.id), { name
             </div>
         </div>
     </div>
-    <Modal :show="show" :title="editing ? 'Editar sucursal' : 'Nueva sucursal'" @close="show = false">
+    <Modal :show="show" :title="editing ? `Editar ${editing.name}` : 'Nueva sucursal o depósito'" @close="show = false">
         <div class="grid grid-cols-2 gap-3">
+            <Field class="col-span-2" label="Tipo">
+                <select v-model="form.type" class="input"><option value="store">Sucursal (vende, tiene cajas)</option><option value="warehouse">Depósito (solo stock)</option></select>
+            </Field>
             <Field label="Nombre" :error="form.errors.name"><input v-model="form.name" class="input" /></Field>
             <Field label="Código / punto de venta"><input v-model="form.code" class="input" /></Field>
             <Field label="Dirección"><input v-model="form.address" class="input" /></Field>

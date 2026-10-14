@@ -37,6 +37,9 @@ class SaleService
     {
         $branchId = $this->context->branchId();
         $type = $data['type'] ?? 'sale';
+        if ($this->context->branch?->type === 'warehouse' && $type === 'sale') {
+            throw new BusinessException('Estás trabajando en un depósito: cambiá a una sucursal para vender.');
+        }
         $isQuote = $type === 'quote';
 
         return DB::transaction(function () use ($data, $user, $branchId, $type, $isQuote) {
@@ -54,13 +57,16 @@ class SaleService
 
             $maxDiscount = $user->maxDiscount();
             $canOverride = $user->hasPermission('sales.price_override');
-            $products = Product::with('prices')->whereIn('id', collect($data['items'])->pluck('product_id'))->get()->keyBy('id');
+            $products = Product::with('prices', 'components.component')->whereIn('id', collect($data['items'])->pluck('product_id'))->get()->keyBy('id');
 
             $lines = [];
             $subtotal = 0;
             $costTotal = 0;
             foreach ($data['items'] as $item) {
                 $product = $products->get($item['product_id']) ?? throw new BusinessException('Producto inexistente.');
+                if ($product->has_variants) {
+                    throw new BusinessException("\"{$product->name}\" tiene variantes: elegí la medida/color concreta.");
+                }
                 $qty = round((float) $item['quantity'], 3);
                 if ($qty <= 0) {
                     throw new BusinessException("Cantidad inválida para \"{$product->name}\".");
@@ -155,7 +161,7 @@ class SaleService
                     'vat_rate' => $l['product']->vat_rate,
                 ]);
                 if (! $isQuote) {
-                    $this->stock->move($l['product'], $branchId, -$l['qty'], 'sale', $sale, null, "Venta #{$sale->number}", true);
+                    $this->stock->moveProduct($l['product'], $branchId, -$l['qty'], 'sale', $sale, null, "Venta #{$sale->number}", true);
                 }
             }
 
@@ -197,7 +203,7 @@ class SaleService
 
             foreach ($sale->items as $item) {
                 if ($item->product) {
-                    $this->stock->move($item->product, $sale->branch_id, (float) $item->quantity, 'cancel', $sale, (float) $item->unit_cost, "Anulación venta #{$sale->number}");
+                    $this->stock->moveProduct($item->product, $sale->branch_id, (float) $item->quantity, 'cancel', $sale, $item->product->type === 'kit' ? null : (float) $item->unit_cost, "Anulación venta #{$sale->number}");
                 }
             }
             foreach ($cashMethods as $p) {
@@ -272,7 +278,7 @@ class SaleService
                 ]);
                 $item->update(['returned_quantity' => (float) $item->returned_quantity + $qty]);
                 if ($restock && $item->product) {
-                    $this->stock->move($item->product, $sale->branch_id, $qty, 'return', $return, (float) $item->unit_cost, "Devolución venta #{$sale->number}");
+                    $this->stock->moveProduct($item->product, $sale->branch_id, $qty, 'return', $return, $item->product->type === 'kit' ? null : (float) $item->unit_cost, "Devolución venta #{$sale->number}");
                 }
             }
 

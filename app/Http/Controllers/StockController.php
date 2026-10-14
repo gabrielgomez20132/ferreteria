@@ -8,6 +8,7 @@ use App\Models\Product;
 use App\Models\ProductStock;
 use App\Models\StockMovement;
 use App\Services\StockService;
+use App\Support\StockAlerts;
 use App\Support\TenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -62,19 +63,29 @@ class StockController extends Controller
         ]);
     }
 
+    /** Alertas de reposición: bajo mínimo o sobre el máximo configurado */
     public function lowStock(Request $request)
     {
         $branchId = $this->ctx->branchId();
-        $rows = Product::query()->where('products.is_active', true)->where('track_stock', true)
+        $mode = $request->input('mode', 'low');
+        $q = Product::query()->where('products.is_active', true)->where('track_stock', true)
             ->leftJoin('product_stocks as ps', fn ($j) => $j->on('ps.product_id', '=', 'products.id')->where('ps.branch_id', $branchId))
-            ->whereRaw('COALESCE(ps.min_stock, products.min_stock) > 0')
-            ->whereRaw('COALESCE(ps.quantity,0) <= COALESCE(ps.min_stock, products.min_stock)')
             ->with('supplier:id,name', 'unit:id,abbreviation')
-            ->select('products.*', DB::raw('COALESCE(ps.quantity,0) as branch_stock'), DB::raw('COALESCE(ps.min_stock, products.min_stock) as branch_min'))
-            ->orderByRaw('COALESCE(ps.quantity,0) - COALESCE(ps.min_stock, products.min_stock)')
-            ->paginate(50)->withQueryString();
+            ->select('products.*', DB::raw('COALESCE(ps.quantity,0) as branch_stock'), DB::raw('COALESCE(ps.min_stock, products.min_stock) as branch_min'), DB::raw('ps.max_stock as branch_max'));
+        if ($mode === 'over') {
+            $q->whereNotNull('ps.max_stock')->where('ps.max_stock', '>', 0)->whereRaw('ps.quantity > ps.max_stock')
+                ->orderByRaw('ps.quantity - ps.max_stock DESC');
+        } else {
+            $q->whereRaw('COALESCE(ps.min_stock, products.min_stock) > 0')
+                ->whereRaw('COALESCE(ps.quantity,0) <= COALESCE(ps.min_stock, products.min_stock)')
+                ->orderByRaw('COALESCE(ps.quantity,0) - COALESCE(ps.min_stock, products.min_stock)');
+        }
 
-        return Inertia::render('Stock/Low', ['products' => $rows]);
+        return Inertia::render('Stock/Low', [
+            'products' => $q->paginate(50)->withQueryString(),
+            'mode' => $mode,
+            'counts' => StockAlerts::counts($branchId),
+        ]);
     }
 
     public function adjustForm()

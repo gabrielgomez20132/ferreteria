@@ -41,6 +41,9 @@ class PurchaseService
             $vat = 0;
             foreach ($data['items'] as $i) {
                 $product = $products->get($i['product_id']) ?? throw new BusinessException('Producto inexistente');
+                if ($product->type === 'kit' || $product->has_variants) {
+                    throw new BusinessException("\"{$product->name}\" es un kit o agrupa variantes: cargá la compra de los productos concretos.");
+                }
                 $qty = (float) $i['quantity'];
                 $factor = (float) ($i['unit_factor'] ?? 1) ?: 1;
                 if ($qty <= 0) {
@@ -154,6 +157,9 @@ class PurchaseService
         if ($purchase->status !== 'confirmed') {
             throw new BusinessException('La compra ya está anulada.');
         }
+        if ((float) $purchase->paid_amount > 0) {
+            throw new BusinessException('La factura tiene pagos imputados. Anulá primero la orden de pago.');
+        }
 
         return DB::transaction(function () use ($purchase) {
             foreach ($purchase->items()->with('product')->get() as $item) {
@@ -192,7 +198,7 @@ class PurchaseService
         $since = now()->subDays(30);
 
         return Product::query()
-            ->where('products.is_active', true)->where('track_stock', true)
+            ->where('products.is_active', true)->where('track_stock', true)->where('products.type', '!=', 'kit')
             ->leftJoin('product_stocks as ps', fn ($j) => $j->on('ps.product_id', '=', 'products.id')->where('ps.branch_id', $branchId))
             ->when($supplierId, fn ($q) => $q->where(fn ($w) => $w->where('products.supplier_id', $supplierId)
                 ->orWhereExists(fn ($e) => $e->selectRaw(1)->from('supplier_products')->whereColumn('supplier_products.product_id', 'products.id')->where('supplier_products.supplier_id', $supplierId))))
@@ -215,5 +221,61 @@ class PurchaseService
 
                 return $p;
             });
+    }
+
+    /**
+     * Pedidos automáticos: toma los productos bajo mínimo, descuenta lo que ya está pedido y no llegó,
+     * y arma un pedido en borrador por proveedor (el principal o, si no tiene, el de menor costo).
+     *
+     * @return \Illuminate\Support\Collection<int, PurchaseOrder>
+     */
+    public function generateAutoOrders(int $branchId, ?int $supplierId = null)
+    {
+        $pendingByProduct = PurchaseOrderItem::query()
+            ->join('purchase_orders as po', 'po.id', '=', 'purchase_order_items.purchase_order_id')
+            ->where('po.tenant_id', $this->context->id())->where('po.branch_id', $branchId)
+            ->whereIn('po.status', ['draft', 'sent', 'partial'])
+            ->selectRaw('purchase_order_items.product_id, SUM(GREATEST(purchase_order_items.quantity - purchase_order_items.received_quantity, 0)) pending')
+            ->groupBy('purchase_order_items.product_id')->pluck('pending', 'product_id');
+
+        $groups = [];
+        foreach ($this->suggestions($branchId, $supplierId) as $p) {
+            $qty = round((float) $p->suggested_quantity - (float) ($pendingByProduct[$p->id] ?? 0), 3);
+            if ($qty <= 0) {
+                continue;
+            }
+            $sid = $supplierId ?? $p->supplier_id ?? $p->best_supplier['id'] ?? null;
+            if (! $sid) {
+                continue;
+            }
+            $sp = $p->supplierProducts->firstWhere('supplier_id', $sid);
+            $groups[$sid][] = ['product' => $p, 'qty' => $qty, 'cost' => (float) ($sp?->cost ?: $p->cost), 'code' => $sp?->supplier_code];
+        }
+
+        return DB::transaction(function () use ($groups, $branchId) {
+            $orders = collect();
+            foreach ($groups as $sid => $items) {
+                $order = PurchaseOrder::create([
+                    'branch_id' => $branchId,
+                    'supplier_id' => $sid,
+                    'user_id' => auth()->id(),
+                    'number' => \App\Support\Numbering::next('purchase_orders', ['tenant_id' => $this->context->id()]),
+                    'status' => 'draft',
+                    'notes' => 'Generado automáticamente por stock mínimo',
+                ]);
+                $total = 0;
+                foreach ($items as $i) {
+                    $order->items()->create([
+                        'product_id' => $i['product']->id, 'supplier_code' => $i['code'], 'description' => $i['product']->name,
+                        'quantity' => $i['qty'], 'unit_cost' => $i['cost'],
+                    ]);
+                    $total += $i['qty'] * $i['cost'];
+                }
+                $order->update(['total' => round($total, 2)]);
+                $orders->push($order);
+            }
+
+            return $orders;
+        });
     }
 }

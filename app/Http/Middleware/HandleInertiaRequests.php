@@ -37,8 +37,10 @@ class HandleInertiaRequests extends Middleware
                 'plan' => $ctx->tenant->plan?->name,
                 'settings' => $ctx->tenant->allSettings(),
             ] : null,
-            'branch' => $ctx->branch?->only(['id', 'name', 'code']),
-            'branches' => fn () => $user && $user->tenant_id ? $user->accessibleBranches()->map->only(['id', 'name'])->values() : [],
+            'branch' => $ctx->branch?->only(['id', 'name', 'code', 'type']),
+            'branches' => fn () => $user && $user->tenant_id ? $user->accessibleBranches()->map->only(['id', 'name', 'type'])->values() : [],
+            // alertas de reposición para la campana del encabezado
+            'stockAlerts' => fn () => $user && $user->tenant_id && $user->hasPermission('stock.view') ? \App\Support\StockAlerts::counts($ctx->branchId()) : null,
             'flash' => [
                 'success' => fn () => $request->session()->get('success'),
                 'error' => fn () => $request->session()->get('error'),

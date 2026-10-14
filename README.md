@@ -28,7 +28,7 @@ Requisitos: Laragon con PHP 8.3+, MySQL, Composer, Node 20+ y Git (vienen con La
    npm install
    npm run build
    ```
-4. Recargá Laragon (**Menú → Recargar** o reiniciar Apache/Nginx) y abrí **https://ferretero-soft.test**
+4. Recargá Laragon (**Menú → Recargar** o reiniciar Apache/Nginx) y abrí **http://ferretero-soft.test**
    (Laragon crea el dominio `.test` automáticamente apuntando a `/public`).
 
 Para desarrollar con recarga en caliente usá `npm run dev` en una terminal aparte.
@@ -58,10 +58,13 @@ sospechoso de +140 %, artículos nuevos y una fila sin precio).
 |---|---|
 | **Precios** (foco) | Importación de listas Excel/CSV de proveedores, mapeo de columnas con detección automática, bonificaciones en cascada, IVA incluido o no, cotización USD, unidades por bulto, vinculación automática (código de proveedor → código de barras → código interno) y manual que "aprende", alta de productos nuevos desde la lista, alertas de variación, revisión con distribución de subas/bajas, aplicación selectiva, historial y **reversión** de cada lote, actualización masiva por proveedor/categoría/marca, precios a revisar (margen real debajo del objetivo), comparativa de costos entre proveedores, etiquetas de góndola de lo que cambió |
 | **Catálogo** | Productos con código interno, código de barras, códigos alternativos, códigos por proveedor, categorías jerárquicas con margen sugerido, marcas, unidades, venta fraccionada, unidad de compra con conversión (rollo 100 m → metros), listas de precio (minorista, mayorista, gremio) con precios especiales, importación/exportación Excel |
+| **Variantes, kits y compuestos** | Productos modelo con variantes (ej. Látex exterior → Color × Envase) generadas automáticamente, cada una con su código, stock y precio. **Kits**: se venden como un artículo y descuentan el stock de cada componente. **Productos fabricados**: se producen con órdenes de producción. El costo de kits y fabricados se recalcula solo cuando cambia el costo de un componente |
+| **Producción** | Órdenes de producción por sucursal: al completarlas se consumen los insumos y entra el producto terminado con su costo real. Lista de insumos necesarios para las órdenes pendientes con stock disponible y faltantes, exportable a Excel |
 | **Punto de venta** | Lector de código de barras, búsqueda por palabras, cantidades fraccionadas, descuentos por ítem y general limitados por rol, cambio de precio con permiso, pagos combinados (efectivo, transferencia, débito, crédito, Mercado Pago, cheque, cuenta corriente), vuelto, presupuestos convertibles en venta, alta rápida de clientes, ticket 80 mm. Atajos: F2 abre el POS, F3 busca, F9 cobra |
 | **Ventas** | Listado con filtros, anulación total (repone stock, devuelve dinero, revierte cuenta corriente), devoluciones parciales con reintegro en caja o crédito en cuenta |
-| **Stock** | Stock por sucursal con mínimos/máximos y ubicación, cada variación genera un movimiento con saldo, ajustes con motivo, faltantes, transferencias entre sucursales (envío → recepción con faltantes), inventario físico total o por categoría |
-| **Compras** | Facturas de compra con conversión de unidades, bonificaciones, IVA, percepciones y prorrateo de flete en el costo, costo promedio ponderado y último costo, decisión sobre precios de venta, pedidos a proveedores con recepción parcial, sugerencias de compra por mínimo y rotación |
+| **Stock** | Stock por sucursal y por **depósito** (sucursales tipo depósito que no venden), mínimos/máximos con **alertas de reposición y sobrestock** (campana en la barra superior), ubicación, cada variación genera un movimiento con saldo, ajustes con motivo, faltantes, transferencias entre sucursales (envío → recepción con faltantes), inventario físico total o por categoría |
+| **Compras** | Facturas de compra con conversión de unidades, bonificaciones, IVA, percepciones y prorrateo de flete en el costo, costo promedio ponderado y último costo, decisión sobre precios de venta, pedidos a proveedores con recepción parcial, **pedidos automáticos** (uno por proveedor según stock mínimo, descontando lo ya pedido), envío del pedido por **WhatsApp** (email: próximamente), sugerencias de compra por mínimo y rotación |
+| **Proveedores** | Cuenta corriente, **órdenes de pago** con varios medios (efectivo, transferencia, cheque, e-cheq), retenciones e imputación a facturas pendientes, imprimibles; **condiciones especiales**: bonificaciones distintas por marca y/o rubro además de las generales del proveedor y las de cada artículo |
 | **Caja** | Apertura/cierre por caja y usuario, ingresos/egresos/retiros, totales por medio de pago, efectivo esperado vs contado con diferencia, historial |
 | **Cuentas corrientes** | Clientes con límite de crédito, vencimientos, imputación de pagos por antigüedad, ajustes; proveedores con deuda por compras y pagos |
 | **Reportes** | Ventas (día/mes/hora/vendedor/sucursal/medio de pago), rentabilidad (categoría/marca/proveedor/producto/vendedor), estado de resultados con gastos, stock valorizado, sin rotación, bajo margen, antigüedad de deuda |
@@ -130,6 +133,17 @@ Cada aplicación (lista de proveedor, actualización masiva, compra, edición ma
 de ese lote y **revertir** (si ningún lote posterior tocó esos productos).
 
 ---
+
+## Actualizar una instalación existente
+
+Si ya tenías el sistema corriendo y recibís una versión nueva:
+
+```bash
+composer install
+php artisan migrate            # aplica las tablas nuevas conservando tus datos
+# o, para empezar de cero con los datos demo actualizados:
+php artisan migrate:fresh --seed
+```
 
 ## Tests
 

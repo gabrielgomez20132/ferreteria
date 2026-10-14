@@ -7,6 +7,7 @@ use App\Models\CashRegister;
 use App\Support\BusinessException;
 use App\Support\TenantContext;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 
 class BranchController extends Controller
@@ -33,12 +34,14 @@ class BranchController extends Controller
         $data = $this->validated($request);
         $plan = $ctx->tenant->plan;
         if ($plan && Branch::count() >= $plan->max_branches) {
-            throw new BusinessException("Su plan ({$plan->name}) permite hasta {$plan->max_branches} sucursal(es). Actualice el plan para agregar más.");
+            throw new BusinessException("Su plan ({$plan->name}) permite hasta {$plan->max_branches} sucursales/depósitos. Actualice el plan para agregar más.");
         }
         $branch = Branch::create($data);
-        CashRegister::create(['branch_id' => $branch->id, 'name' => 'Caja 1']);
+        if ($branch->type === 'store') {
+            CashRegister::create(['branch_id' => $branch->id, 'name' => 'Caja 1']);
+        }
 
-        return back()->with('success', 'Sucursal creada.');
+        return back()->with('success', $branch->type === 'warehouse' ? 'Depósito creado.' : 'Sucursal creada.');
     }
 
     public function update(Request $request, Branch $branch)
@@ -72,6 +75,7 @@ class BranchController extends Controller
         return $request->validate([
             'name' => ['required', 'string', 'max:100'],
             'code' => ['nullable', 'string', 'max:10'],
+            'type' => ['required', Rule::in(['store', 'warehouse'])],
             'address' => ['nullable', 'string', 'max:200'],
             'phone' => ['nullable', 'string', 'max:50'],
             'is_main' => ['boolean'],

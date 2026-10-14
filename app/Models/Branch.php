@@ -14,7 +14,7 @@ class Branch extends Model
     protected $guarded = ['id'];
 
     /** Valores por defecto (coinciden con la base de datos) */
-    protected $attributes = ['is_active' => true, 'is_main' => false];
+    protected $attributes = ['is_active' => true, 'is_main' => false, 'type' => 'store'];
 
     protected function casts(): array
     {
@@ -37,5 +37,10 @@ class Branch extends Model
     public function stocks(): HasMany
     {
         return $this->hasMany(ProductStock::class);
+    }
+
+    public function isWarehouse(): bool
+    {
+        return $this->type === 'warehouse';
     }
 }

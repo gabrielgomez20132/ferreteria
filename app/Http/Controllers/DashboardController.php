@@ -94,6 +94,8 @@ class DashboardController extends Controller
                 'month_margin' => $this->margin($ctx, $month, $scope)['margin'],
                 'month_vs_prev' => $prevMonthTotal > 0 ? round(((float) $monthStats->t - $prevMonthTotal) / $prevMonthTotal * 100, 1) : null,
                 'low_stock' => $lowStock,
+                'over_stock' => \App\Support\StockAlerts::counts($branchId)['over'],
+                'pending_production' => \App\Models\ProductionOrder::where('status', 'pending')->where('branch_id', $branchId)->count(),
                 'outdated_prices' => Product::where('is_active', true)->whereRaw(PricingService::outdatedSql())->count(),
                 'receivables' => (float) Customer::where('balance', '>', 0)->sum('balance'),
                 'payables' => (float) Supplier::where('balance', '>', 0)->sum('balance'),

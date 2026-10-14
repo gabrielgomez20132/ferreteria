@@ -1,7 +1,7 @@
 <script setup>
 import { computed } from 'vue';
 
-const props = defineProps({ status: String });
+const props = defineProps({ status: String, labels: { type: Object, default: () => ({}) } });
 const MAP = {
     completed: ['Confirmada', 'badge-down'],
     confirmed: ['Confirmada', 'badge-down'],
@@ -26,8 +26,12 @@ const MAP = {
     unchanged: ['Sin cambio', 'badge-gray'],
     error: ['Error', 'badge-up'],
     created: ['Alta nueva', 'badge-down'],
+    pending: ['Pendiente', 'badge-warn'],
 };
-const s = computed(() => MAP[props.status] ?? [props.status, 'badge-gray']);
+const s = computed(() => {
+    const base = MAP[props.status] ?? [props.status, 'badge-gray'];
+    return props.labels[props.status] ? [props.labels[props.status], base[1]] : base;
+});
 </script>
 
 <template>

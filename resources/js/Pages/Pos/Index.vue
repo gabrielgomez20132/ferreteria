@@ -198,7 +198,10 @@ const openTicket = () => (ticketFor.value = lastSale.value);
     <div class="-m-4 grid min-h-[calc(100vh-3rem)] lg:-m-6 lg:grid-cols-[1fr_380px]">
         <!-- Carrito -->
         <section class="flex min-w-0 flex-col p-4 lg:p-5">
-            <div v-if="!session" class="mb-3 flex items-center gap-3 rounded-md border border-hazard-500/60 bg-hazard-300/25 px-3 py-2 text-sm">
+            <div v-if="page.props.branch?.type === 'warehouse'" class="mb-3 rounded-md border border-up/40 bg-up-bg px-3 py-2 text-sm text-up">
+                Estás trabajando en un depósito: los depósitos no venden. Cambiá a una sucursal arriba a la izquierda (podés guardar presupuestos igual).
+            </div>
+            <div v-else-if="!session" class="mb-3 flex items-center gap-3 rounded-md border border-hazard-500/60 bg-hazard-300/25 px-3 py-2 text-sm">
                 <Wallet class="size-4" /> No tenés una caja abierta.
                 <Link :href="route('cash.index')" class="link font-medium">Abrir caja</Link>
             </div>

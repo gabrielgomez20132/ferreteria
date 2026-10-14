@@ -12,6 +12,8 @@ use App\Http\Controllers\CustomerController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\ExpenseController;
 use App\Http\Controllers\InventoryCountController;
+use App\Http\Controllers\PaymentOrderController;
+use App\Http\Controllers\ProductionOrderController;
 use App\Http\Controllers\PosController;
 use App\Http\Controllers\PriceUpdateController;
 use App\Http\Controllers\ProductController;
@@ -60,6 +62,7 @@ Route::middleware('auth')->group(function () {
             Route::get('/{product}/editar', [ProductController::class, 'edit'])->name('edit');
             Route::put('/{product}', [ProductController::class, 'update'])->name('update');
             Route::delete('/{product}', [ProductController::class, 'destroy'])->name('destroy');
+            Route::post('/{product}/variantes', [ProductController::class, 'variants'])->name('variants');
         });
         Route::get('/{product}', [ProductController::class, 'show'])->name('show')->middleware('permission:products.view');
     });
@@ -122,6 +125,15 @@ Route::middleware('auth')->group(function () {
             Route::post('/{transfer}/cancelar', [StockTransferController::class, 'cancel'])->name('cancel');
         });
 
+        Route::middleware('permission:production.manage')->prefix('produccion')->name('production.')->group(function () {
+            Route::get('/', [ProductionOrderController::class, 'index'])->name('index');
+            Route::post('/', [ProductionOrderController::class, 'store'])->name('store');
+            Route::get('/insumos', [ProductionOrderController::class, 'exportRequirements'])->name('requirements');
+            Route::get('/{order}', [ProductionOrderController::class, 'show'])->name('show');
+            Route::post('/{order}/completar', [ProductionOrderController::class, 'complete'])->name('complete');
+            Route::post('/{order}/cancelar', [ProductionOrderController::class, 'cancel'])->name('cancel');
+        });
+
         Route::middleware('permission:inventory.manage')->prefix('inventarios')->name('inventory.')->group(function () {
             Route::get('/', [InventoryCountController::class, 'index'])->name('index');
             Route::post('/', [InventoryCountController::class, 'store'])->name('store');
@@ -166,6 +178,8 @@ Route::middleware('auth')->group(function () {
             Route::post('/{supplier}/pagos', [SupplierController::class, 'payment'])->name('payment');
             Route::put('/{supplier}/productos/{supplierProduct}', [SupplierController::class, 'updateProduct'])->name('products.update');
             Route::delete('/{supplier}/productos/{supplierProduct}', [SupplierController::class, 'destroyProduct'])->name('products.destroy');
+            Route::post('/{supplier}/bonificaciones', [SupplierController::class, 'storeRule'])->name('rules.store');
+            Route::delete('/{supplier}/bonificaciones/{rule}', [SupplierController::class, 'destroyRule'])->name('rules.destroy');
         });
         Route::get('/{supplier}', [SupplierController::class, 'show'])->name('show')->middleware('permission:suppliers.view');
     });
@@ -176,8 +190,16 @@ Route::middleware('auth')->group(function () {
             Route::get('/nueva', [PurchaseController::class, 'create'])->name('create')->middleware('permission:purchases.manage');
             Route::post('/', [PurchaseController::class, 'store'])->name('store')->middleware('permission:purchases.manage');
             Route::get('/sugerencias', [PurchaseController::class, 'suggestions'])->name('suggestions')->middleware('permission:purchases.view');
+            Route::post('/sugerencias/pedidos-automaticos', [PurchaseController::class, 'autoOrders'])->name('auto-orders')->middleware('permission:purchases.manage');
             Route::get('/{purchase}', [PurchaseController::class, 'show'])->name('show')->middleware('permission:purchases.view')->whereNumber('purchase');
             Route::post('/{purchase}/anular', [PurchaseController::class, 'cancel'])->name('cancel')->middleware('permission:purchases.manage');
+        });
+        Route::prefix('ordenes-de-pago')->name('payment-orders.')->group(function () {
+            Route::get('/', [PaymentOrderController::class, 'index'])->name('index')->middleware('permission:suppliers.view');
+            Route::get('/nueva', [PaymentOrderController::class, 'create'])->name('create')->middleware('permission:suppliers.manage');
+            Route::post('/', [PaymentOrderController::class, 'store'])->name('store')->middleware('permission:suppliers.manage');
+            Route::get('/{order}', [PaymentOrderController::class, 'show'])->name('show')->middleware('permission:suppliers.view');
+            Route::post('/{order}/anular', [PaymentOrderController::class, 'cancel'])->name('cancel')->middleware('permission:suppliers.manage');
         });
         Route::prefix('pedidos')->name('purchase-orders.')->group(function () {
             Route::get('/', [PurchaseOrderController::class, 'index'])->name('index')->middleware('permission:purchases.view');

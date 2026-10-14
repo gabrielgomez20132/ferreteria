@@ -23,6 +23,7 @@ class Purchase extends Model
             'other_taxes' => 'decimal:2',
             'extra_costs' => 'decimal:2',
             'total' => 'decimal:2',
+            'paid_amount' => 'decimal:2',
             'update_costs' => 'boolean',
         ];
     }
@@ -50,5 +51,10 @@ class Purchase extends Model
     public function items(): HasMany
     {
         return $this->hasMany(PurchaseItem::class);
+    }
+
+    public function pendingAmount(): float
+    {
+        return $this->status === 'confirmed' ? round((float) $this->total - (float) $this->paid_amount, 2) : 0;
     }
 }

@@ -5,7 +5,7 @@ import {
     LayoutDashboard, ShoppingCart, Receipt, Users, Wallet, Tags, FileSpreadsheet, AlertTriangle, Percent, Scale,
     History, Printer, Package, FolderTree, Upload, Boxes, PackageMinus, ArrowLeftRight, ClipboardCheck, Truck,
     ShoppingBag, ClipboardList, Lightbulb, BadgeDollarSign, BarChart3, Building2, Store, UserCog, ShieldCheck,
-    ScrollText, LogOut, Menu, X, ChevronDown, Server, CreditCard, Sliders,
+    ScrollText, LogOut, Menu, X, ChevronDown, Server, CreditCard, Sliders, Factory, Banknote, Bell,
 } from '@lucide/vue';
 import { useCan } from '@/lib/can';
 import Toasts from '@/Components/Toasts.vue';
@@ -50,15 +50,17 @@ const sections = computed(() => {
         ] },
         { title: 'Stock', items: [
             { label: 'Stock por sucursal', href: route('stock.index'), icon: Boxes, active: 'stock.index', perm: ['stock.view'] },
-            { label: 'Faltantes', href: route('stock.low'), icon: PackageMinus, active: 'stock.low', perm: ['stock.view'] },
+            { label: 'Alertas de reposición', href: route('stock.low'), icon: PackageMinus, active: 'stock.low', perm: ['stock.view'] },
             { label: 'Movimientos', href: route('stock.movements'), icon: Sliders, active: ['stock.movements', 'stock.adjust'], perm: ['stock.view'] },
             { label: 'Transferencias', href: route('stock.transfers.index'), icon: ArrowLeftRight, active: 'stock.transfers.*', perm: ['stock.transfer'] },
             { label: 'Inventario físico', href: route('stock.inventory.index'), icon: ClipboardCheck, active: 'stock.inventory.*', perm: ['inventory.manage'] },
+            { label: 'Producción', href: route('stock.production.index'), icon: Factory, active: 'stock.production.*', perm: ['production.manage'] },
         ] },
         { title: 'Compras', items: [
             { label: 'Proveedores', href: route('suppliers.index'), icon: Truck, active: 'suppliers.*', perm: ['suppliers.view'] },
             { label: 'Compras', href: route('purchases.index'), icon: ShoppingBag, active: ['purchases.index', 'purchases.create', 'purchases.show'], perm: ['purchases.view'] },
             { label: 'Pedidos', href: route('purchase-orders.index'), icon: ClipboardList, active: 'purchase-orders.*', perm: ['purchases.view'] },
+            { label: 'Órdenes de pago', href: route('payment-orders.index'), icon: Banknote, active: 'payment-orders.*', perm: ['suppliers.view'] },
             { label: 'Sugerencias de compra', href: route('purchases.suggestions'), icon: Lightbulb, active: 'purchases.suggestions', perm: ['purchases.view'] },
         ] },
         { title: 'Gestión', items: [
@@ -67,7 +69,7 @@ const sections = computed(() => {
         ] },
         { title: 'Configuración', items: [
             { label: 'Empresa', href: route('settings.company'), icon: Building2, active: 'settings.*', perm: ['settings.manage'] },
-            { label: 'Sucursales y cajas', href: route('branches.index'), icon: Store, active: 'branches.*', perm: ['branches.manage'] },
+            { label: 'Sucursales y depósitos', href: route('branches.index'), icon: Store, active: 'branches.*', perm: ['branches.manage'] },
             { label: 'Usuarios', href: route('users.index'), icon: UserCog, active: 'users.*', perm: ['users.manage'] },
             { label: 'Roles y permisos', href: route('roles.index'), icon: ShieldCheck, active: 'roles.*', perm: ['users.manage'] },
             { label: 'Auditoría', href: route('audit.index'), icon: ScrollText, active: 'audit.*', perm: ['audit.view'] },
@@ -158,11 +160,20 @@ if (typeof window !== 'undefined') {
                         class="rounded-md border-0 bg-transparent py-1 pr-7 pl-1 text-sm font-medium text-steel-800 focus:ring-2 focus:ring-link/20"
                         :disabled="page.props.branches.length < 2"
                     >
-                        <option v-for="b in page.props.branches" :key="b.id" :value="b.id">{{ b.name }}</option>
+                        <option v-for="b in page.props.branches" :key="b.id" :value="b.id">{{ b.name }}{{ b.type === 'warehouse' ? ' (depósito)' : '' }}</option>
                     </select>
                 </div>
                 <div v-if="trialDays !== null" class="badge-warn ml-2 hidden sm:inline-flex">Prueba: {{ trialDays }} días restantes</div>
                 <div class="ml-auto flex items-center gap-2">
+                    <Link
+                        v-if="page.props.stockAlerts && (page.props.stockAlerts.low || page.props.stockAlerts.over)"
+                        :href="route('stock.low', page.props.stockAlerts.low ? {} : { mode: 'over' })"
+                        class="relative rounded-md p-1.5 text-steel-600 hover:bg-steel-100"
+                        :title="`${page.props.stockAlerts.low} bajo mínimo · ${page.props.stockAlerts.over} sobre máximo`"
+                    >
+                        <Bell class="size-5" />
+                        <span class="absolute -top-0.5 -right-0.5 min-w-4 rounded-full bg-up px-1 text-center text-[10px] leading-4 font-semibold text-white">{{ page.props.stockAlerts.low + page.props.stockAlerts.over }}</span>
+                    </Link>
                     <Link v-if="can('sales.create') && !route().current('pos')" :href="route('pos')" class="btn-primary btn-sm">
                         <ShoppingCart class="size-3.5" /> Vender
                     </Link>

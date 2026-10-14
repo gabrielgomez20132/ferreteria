@@ -25,6 +25,8 @@ class StockService
         'transfer_out' => 'Transferencia saliente',
         'inventory' => 'Inventario físico',
         'purchase_cancel' => 'Anulación de compra',
+        'production_in' => 'Producción (ingreso)',
+        'production_out' => 'Producción (consumo de insumos)',
     ];
 
     public function __construct(private TenantContext $context) {}
@@ -74,6 +76,36 @@ class StockService
             'notes' => $notes,
             'created_at' => now(),
         ]);
+    }
+
+    /**
+     * Igual que move(), pero si el producto es un kit mueve el stock de cada componente.
+     */
+    public function moveProduct(
+        Product $product,
+        int $branchId,
+        float $quantity,
+        string $type,
+        ?Model $reference = null,
+        ?float $unitCost = null,
+        ?string $notes = null,
+        bool $checkAvailability = false,
+    ): void {
+        if ($product->type !== 'kit') {
+            $this->move($product, $branchId, $quantity, $type, $reference, $unitCost, $notes, $checkAvailability);
+
+            return;
+        }
+        $product->loadMissing('components.component');
+        if ($product->components->isEmpty()) {
+            throw new BusinessException("El kit \"{$product->name}\" no tiene componentes cargados.");
+        }
+        foreach ($product->components as $c) {
+            if ($c->component) {
+                $this->move($c->component, $branchId, round($quantity * (float) $c->quantity, 3), $type, $reference, null,
+                    trim(($notes ?? '').' (kit '.$product->code.')'), $checkAvailability);
+            }
+        }
     }
 
     /** Fija el stock a una cantidad (ajustes e inventario) */

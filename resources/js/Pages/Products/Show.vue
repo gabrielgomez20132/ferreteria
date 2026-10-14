@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { Link, router, useForm } from '@inertiajs/vue3';
 import { Pencil, Printer, Trash2 } from '@lucide/vue';
 import PageHeader from '@/Components/PageHeader.vue';
@@ -9,10 +9,29 @@ import Field from '@/Components/Field.vue';
 import { money, qty, pct, date, datetime, toNum } from '@/lib/format';
 import { useCan } from '@/lib/can';
 
-const props = defineProps({ product: Object, canCost: Boolean, lists: Array, branches: Array, history: Array, movements: Array, sales90: Object, supplierProducts: Array });
+const props = defineProps({ product: Object, canCost: Boolean, lists: Array, branches: Array, history: Array, movements: Array, sales90: Object, supplierProducts: Array, componentsCost: Number, kitAvailable: Number });
 const can = useCan();
 const p = props.product;
-const tab = ref('stock');
+const tab = ref(p.has_variants ? 'variants' : p.type !== 'simple' ? 'components' : 'stock');
+const TYPE_LABEL = { kit: 'Kit', manufactured: 'Fabricado' };
+const tabs = computed(() => {
+    const t = {};
+    if (p.has_variants || !p.variant_of_id) t.variants = `Variantes${p.variants.length ? ' (' + p.variants.length + ')' : ''}`;
+    if (p.type !== 'simple') t.components = p.type === 'kit' ? 'Componentes' : 'Insumos';
+    if (!p.has_variants && p.type !== 'kit') t.stock = 'Stock por sucursal';
+    t.prices = 'Listas de precio';
+    if (props.canCost) {
+        t.suppliers = 'Proveedores';
+        t.history = 'Historial de precios';
+    }
+    if (p.used_in?.length) t.usedin = 'Se usa en';
+    t.moves = 'Movimientos';
+    return t;
+});
+// generador de variantes
+const variantForm = useForm({ attributes: [{ name: 'Medida', values: '' }] });
+const genVariants = () => variantForm.post(route('products.variants', p.id), { preserveScroll: true, onSuccess: () => variantForm.reset() });
+const vStock = (v) => (v.stocks ?? []).reduce((a, s) => a + toNum(s.quantity), 0);
 const stockOf = (branchId) => p.stocks.find((s) => s.branch_id === branchId);
 const totalStock = p.stocks.reduce((a, s) => a + toNum(s.quantity), 0);
 
@@ -38,6 +57,9 @@ const MOVES = { initial: 'Inicial', purchase: 'Compra', sale: 'Venta', return: '
                 <span v-if="p.category">· {{ p.category.name }}</span><span v-if="p.brand">· {{ p.brand.name }}</span>
                 <span v-if="!p.is_active" class="badge-gray">Inactivo</span>
                 <span v-if="p.allow_fraction" class="badge-blue">Se vende fraccionado</span>
+                <span v-if="TYPE_LABEL[p.type]" class="badge-warn">{{ TYPE_LABEL[p.type] }}</span>
+                <span v-if="p.has_variants" class="badge-blue">Modelo con {{ p.variants.length }} variantes</span>
+                <span v-if="p.variant_of">· variante de <Link :href="route('products.show', p.variant_of.id)" class="link">{{ p.variant_of.name }}</Link></span>
             </p>
         </template>
         <Link :href="route('products.labels', { ids: String(p.id) })" class="btn-secondary"><Printer class="size-4" /> Etiqueta</Link>
@@ -52,12 +74,64 @@ const MOVES = { initial: 'Inicial', purchase: 'Compra', sale: 'Venta', return: '
             <div class="p-4"><div class="text-sm text-steel-500">Margen real / objetivo</div><div class="text-2xl font-semibold tabular-nums" :class="toNum(p.price) < toNum(p.suggested_price) * 0.98 && 'text-up'">{{ pct(p.margin) }}</div><div class="text-xs text-steel-500">objetivo {{ pct(p.markup) }} s/costo · sugerido {{ money(p.suggested_price) }}</div></div>
             <div class="p-4"><div class="text-sm text-steel-500">Costo promedio / última compra</div><div class="text-base font-semibold tabular-nums">{{ money(p.average_cost) }}</div><div class="text-sm tabular-nums text-steel-600">{{ money(p.last_purchase_cost) }}</div></div>
         </template>
-        <div class="p-4"><div class="text-sm text-steel-500">Stock total</div><div class="text-2xl font-semibold tabular-nums">{{ qty(totalStock) }} <span class="text-sm text-steel-500">{{ p.unit?.abbreviation }}</span></div><div class="text-xs text-steel-500">vendido 90 días: {{ qty(sales90.qty) }}</div></div>
+        <div v-if="p.type === 'kit'" class="p-4"><div class="text-sm text-steel-500">Kits disponibles</div><div class="text-2xl font-semibold tabular-nums">{{ qty(kitAvailable) }}</div><div class="text-xs text-steel-500">según el stock de componentes en esta sucursal</div></div>
+        <div v-else class="p-4"><div class="text-sm text-steel-500">Stock total</div><div class="text-2xl font-semibold tabular-nums">{{ qty(p.has_variants ? p.variants.reduce((a, v) => a + vStock(v), 0) : totalStock) }} <span class="text-sm text-steel-500">{{ p.unit?.abbreviation }}</span></div><div class="text-xs text-steel-500">vendido 90 días: {{ qty(sales90.qty) }}</div></div>
     </div>
 
     <div class="mb-3 flex flex-wrap gap-1 border-b border-steel-200">
-        <button v-for="(l, k) in { stock: 'Stock por sucursal', prices: 'Listas de precio', suppliers: 'Proveedores', history: 'Historial de precios', moves: 'Movimientos' }" :key="k" v-show="canCost || !['suppliers', 'history'].includes(k)"
-            class="-mb-px border-b-2 px-3 py-2 text-sm" :class="tab === k ? 'border-hazard-500 font-medium' : 'border-transparent text-steel-500'" @click="tab = k">{{ l }}</button>
+        <button v-for="(l, k) in tabs" :key="k" class="-mb-px border-b-2 px-3 py-2 text-sm" :class="tab === k ? 'border-hazard-500 font-medium' : 'border-transparent text-steel-500'" @click="tab = k">{{ l }}</button>
+    </div>
+
+    <div v-show="tab === 'variants'" class="space-y-4">
+        <div v-if="p.variants.length" class="panel overflow-x-auto">
+            <table class="table">
+                <thead><tr><th>Variante</th><th>Atributos</th><th class="num">Precio</th><th class="num">Stock total</th></tr></thead>
+                <tbody>
+                    <tr v-for="v in p.variants" :key="v.id">
+                        <td><Link :href="route('products.show', v.id)" class="link">{{ v.name }}</Link><div class="code">{{ v.code }}</div></td>
+                        <td><span v-for="(val, k) in v.variant_attributes" :key="k" class="badge-gray mr-1">{{ k }}: {{ val }}</span></td>
+                        <td class="num">{{ money(v.price) }}</td>
+                        <td class="num">{{ qty(vStock(v)) }}</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <form v-if="can('products.manage') && !p.variant_of_id" class="panel space-y-3 p-4" @submit.prevent="genVariants">
+            <h2 class="panel-title">{{ p.variants.length ? 'Agregar variantes' : 'Crear variantes de este producto' }}</h2>
+            <p class="text-sm text-steel-600">Cada combinación se crea como un producto con su propio código, stock y precio (heredan costo, precio y proveedor de este modelo). El modelo deja de venderse: se venden sus variantes.</p>
+            <div v-for="(a, i) in variantForm.attributes" :key="i" class="grid grid-cols-[180px_1fr_auto] items-end gap-2">
+                <Field label="Atributo"><input v-model="a.name" class="input" placeholder="Medida, Color, Largo…" /></Field>
+                <Field label="Valores separados por coma"><input v-model="a.values" class="input" placeholder="6x40, 8x50, 10x60" /></Field>
+                <button v-if="variantForm.attributes.length > 1" type="button" class="pb-2 text-steel-400 hover:text-up" @click="variantForm.attributes.splice(i, 1)" aria-label="Quitar">✕</button>
+            </div>
+            <div class="flex gap-2">
+                <button v-if="variantForm.attributes.length < 3" type="button" class="btn-ghost btn-sm" @click="variantForm.attributes.push({ name: '', values: '' })">+ Otro atributo</button>
+                <button class="btn-primary ml-auto" :disabled="variantForm.processing">Generar variantes</button>
+            </div>
+        </form>
+    </div>
+
+    <div v-show="tab === 'components'" class="panel overflow-x-auto">
+        <table class="table">
+            <thead><tr><th>{{ p.type === 'kit' ? 'Componente' : 'Insumo' }}</th><th class="num">Cantidad</th><th class="num">Stock aquí</th><th v-if="canCost" class="num">Costo</th></tr></thead>
+            <tbody>
+                <tr v-for="c in p.components" :key="c.id">
+                    <td><Link :href="route('products.show', c.component_id)" class="link">{{ c.component?.name }}</Link><div class="code">{{ c.component?.code }}</div></td>
+                    <td class="num">{{ qty(c.quantity) }} {{ c.component?.unit?.abbreviation }}</td>
+                    <td class="num">{{ qty(c.component?.stocks?.[0]?.quantity ?? 0) }}</td>
+                    <td v-if="canCost" class="num">{{ money(toNum(c.component?.cost) * toNum(c.quantity)) }}</td>
+                </tr>
+                <tr v-if="!p.components.length"><td colspan="4" class="py-6 text-center text-steel-500">Sin componentes. Cargalos desde "Editar".</td></tr>
+            </tbody>
+            <tfoot v-if="canCost && p.components.length"><tr><td colspan="3" class="px-3 py-2 text-right font-medium">Costo total</td><td class="num px-3 font-semibold">{{ money(componentsCost) }}</td></tr></tfoot>
+        </table>
+        <div v-if="p.type === 'manufactured' && can('production.manage')" class="border-t border-steel-200 px-4 py-2.5"><Link :href="route('stock.production.index')" class="text-sm link">Crear orden de producción</Link></div>
+    </div>
+
+    <div v-show="tab === 'usedin'" class="panel">
+        <table class="table"><tbody>
+            <tr v-for="u in p.used_in" :key="u.id"><td><Link :href="route('products.show', u.product_id)" class="link">{{ u.product?.name }}</Link></td><td>{{ TYPE_LABEL[u.product?.type] }}</td><td class="num">{{ qty(u.quantity) }} por unidad</td></tr>
+        </tbody></table>
     </div>
 
     <div v-show="tab === 'stock'" class="panel">

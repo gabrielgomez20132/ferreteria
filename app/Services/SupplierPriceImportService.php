@@ -49,6 +49,7 @@ class SupplierPriceImportService
         private PricingService $pricing,
         private PriceUpdateService $updates,
         private TenantContext $context,
+        private SupplierDiscounts $discounts,
     ) {}
 
     public function upload(Supplier $supplier, UploadedFile $file): SupplierPriceImport
@@ -126,7 +127,7 @@ class SupplierPriceImportService
         $supplierProducts = SupplierProduct::where('supplier_id', $supplier->id)
             ->whereNotNull('supplier_code')->get()
             ->keyBy(fn ($sp) => $this->key($sp->supplier_code));
-        $products = Product::query()->select('id', 'code', 'barcode', 'cost', 'price', 'markup', 'vat_rate', 'supplier_id', 'tenant_id')->get()->keyBy('id');
+        $products = Product::query()->select('id', 'code', 'barcode', 'cost', 'price', 'markup', 'vat_rate', 'supplier_id', 'tenant_id', 'brand_id', 'category_id')->get()->keyBy('id');
         $barcodes = [];
         $internalCodes = [];
         foreach ($products as $p) {
@@ -244,7 +245,7 @@ class SupplierPriceImportService
             $sp ??= $spByProduct->get($product->id);
             $pack = $packFromFile ?: (float) ($sp?->pack_quantity ?: 1);
             $newCost = $this->pricing->supplierCost(
-                $price, $this->discountsFor($sp, $supplier, $options, $extraDiscounts), $pack,
+                $price, $this->discountsFor($sp, $supplier, $options, $extraDiscounts, $product), $pack,
                 (bool) $options['prices_include_vat'], (float) $product->vat_rate,
                 (float) $options['surcharge_percent'], (float) $options['exchange_rate'],
             );
@@ -290,16 +291,11 @@ class SupplierPriceImportService
         $row['selected'] = $row['status'] === 'matched' && ($variation === null || abs($variation) < max($threshold * 3, 50));
     }
 
-    private function discountsFor(?SupplierProduct $sp, Supplier $supplier, array $options, array $extra): array
+    private function discountsFor(?SupplierProduct $sp, Supplier $supplier, array $options, array $extra, ?Product $product = null): array
     {
-        $base = [];
-        if ($options['use_supplier_discounts']) {
-            $base = [
-                $sp?->discount_1 ?? $supplier->discount_1,
-                $sp?->discount_2 ?? $supplier->discount_2,
-                $sp?->discount_3 ?? $supplier->discount_3,
-            ];
-        }
+        $base = $options['use_supplier_discounts']
+            ? $this->discounts->forProduct($supplier, $sp, $product?->brand_id, $product?->category_id)
+            : [];
 
         return array_merge(array_map('floatval', $base), $extra);
     }
@@ -356,7 +352,7 @@ class SupplierPriceImportService
 
             $newCost = $this->pricing->supplierCost(
                 (float) $row->list_price,
-                $this->discountsFor($sp, $supplier, $options, [(float) $options['extra_discount_1'], (float) $options['extra_discount_2']]),
+                $this->discountsFor($sp, $supplier, $options, [(float) $options['extra_discount_1'], (float) $options['extra_discount_2']], $product),
                 (float) $sp->pack_quantity, (bool) $options['prices_include_vat'], (float) $product->vat_rate,
                 (float) $options['surcharge_percent'], (float) $options['exchange_rate'],
             );

@@ -44,6 +44,12 @@ class SupplierController extends Controller
             'purchases' => $supplier->purchases()->latest('date')->limit(10)->get(['id', 'voucher_type', 'voucher_number', 'date', 'total', 'status']),
             'methods' => collect(CashService::METHODS)->except('account'),
             'filters' => $request->only('search'),
+            'rules' => $supplier->discountRules()->with('brand:id,name', 'category:id,name')->get(),
+            'brands' => \App\Models\Brand::orderBy('name')->get(['id', 'name']),
+            'categories' => \App\Models\Category::orderBy('name')->get(['id', 'name']),
+            'pendingPurchases' => $supplier->purchases()->where('status', 'confirmed')->whereColumn('paid_amount', '<', 'total')
+                ->orderBy('due_date')->get(['id', 'voucher_type', 'voucher_number', 'date', 'due_date', 'total', 'paid_amount']),
+            'paymentOrders' => \App\Models\PaymentOrder::where('supplier_id', $supplier->id)->latest('date')->limit(10)->get(['id', 'number', 'date', 'total', 'status']),
         ]);
     }
 
@@ -94,11 +100,12 @@ class SupplierController extends Controller
 
         // Si cambian las bonificaciones, se recalcula el costo de cada artículo del proveedor (no cambia precios de venta)
         if ($discountsChanged && $request->boolean('recalculate_costs')) {
-            $supplier->supplierProducts()->with('product:id,vat_rate')->where('list_price', '>', 0)->chunkById(500, function ($rows) use ($supplier, $pricing) {
+            $discounts = app(\App\Services\SupplierDiscounts::class);
+            $supplier->supplierProducts()->with('product:id,vat_rate,brand_id,category_id')->where('list_price', '>', 0)->chunkById(500, function ($rows) use ($supplier, $pricing, $discounts) {
                 foreach ($rows as $sp) {
-                    $sp->update(['cost' => $pricing->supplierCost((float) $sp->list_price, [
-                        $sp->discount_1 ?? $supplier->discount_1, $sp->discount_2 ?? $supplier->discount_2, $sp->discount_3 ?? $supplier->discount_3,
-                    ], (float) $sp->pack_quantity, $supplier->prices_include_vat, (float) ($sp->product?->vat_rate ?? 21))]);
+                    $sp->update(['cost' => $pricing->supplierCost((float) $sp->list_price,
+                        $discounts->forProduct($supplier, $sp, $sp->product?->brand_id, $sp->product?->category_id),
+                        (float) $sp->pack_quantity, (bool) $supplier->prices_include_vat, (float) ($sp->product?->vat_rate ?? 21))]);
                 }
             });
         }
@@ -116,7 +123,8 @@ class SupplierController extends Controller
         return redirect()->route('suppliers.index')->with('success', 'Proveedor eliminado.');
     }
 
-    public function payment(Request $request, Supplier $supplier, AccountService $accounts, CashService $cash)
+    /** Pago rápido: genera una orden de pago de un solo medio, imputada automáticamente a las facturas más viejas */
+    public function payment(Request $request, Supplier $supplier, \App\Services\PaymentOrderService $orders)
     {
         $data = $request->validate([
             'amount' => ['required', 'numeric', 'gt:0'],
@@ -124,13 +132,47 @@ class SupplierController extends Controller
             'from_cash' => ['boolean'],
             'notes' => ['nullable', 'string', 'max:200'],
         ]);
-        $session = $request->boolean('from_cash') ? $cash->openSessionFor($request->user(), $this->ctx->branchId()) : null;
-        if ($request->boolean('from_cash') && ! $session) {
-            throw new BusinessException('No hay una caja abierta para registrar el egreso.');
-        }
-        $accounts->paySupplier($supplier, (float) $data['amount'], $data['method'], $session, $data['notes'] ?? null);
+        $order = $orders->create([
+            'supplier_id' => $supplier->id,
+            'date' => now()->toDateString(),
+            'notes' => $data['notes'] ?? null,
+            'from_cash' => $request->boolean('from_cash'),
+            'lines' => [['method' => $data['method'], 'amount' => $data['amount']]],
+        ]);
 
-        return back()->with('success', 'Pago registrado.');
+        return back()->with('success', "Pago registrado (orden de pago #{$order->number}).");
+    }
+
+    public function storeRule(Request $request, Supplier $supplier)
+    {
+        $data = $request->validate([
+            'id' => ['nullable', 'integer'],
+            'brand_id' => ['nullable', Rule::exists('brands', 'id')->where('tenant_id', $this->ctx->id())],
+            'category_id' => ['nullable', Rule::exists('categories', 'id')->where('tenant_id', $this->ctx->id())],
+            'discount_1' => ['required', 'numeric', 'min:-100', 'max:100'],
+            'discount_2' => ['nullable', 'numeric', 'min:-100', 'max:100'],
+            'discount_3' => ['nullable', 'numeric', 'min:-100', 'max:100'],
+            'notes' => ['nullable', 'string', 'max:200'],
+        ]);
+        if (empty($data['brand_id']) && empty($data['category_id'])) {
+            throw new BusinessException('Elegí una marca, una categoría o ambas.');
+        }
+        $attrs = ['brand_id' => $data['brand_id'] ?? null, 'category_id' => $data['category_id'] ?? null,
+            'discount_1' => $data['discount_1'], 'discount_2' => $data['discount_2'] ?? 0, 'discount_3' => $data['discount_3'] ?? 0, 'notes' => $data['notes'] ?? null];
+        if (! empty($data['id'])) {
+            $supplier->discountRules()->whereKey($data['id'])->firstOrFail()->update($attrs);
+        } else {
+            $supplier->discountRules()->create($attrs);
+        }
+
+        return back()->with('success', 'Bonificación guardada. Se aplicará en la próxima lista de precios que importes.');
+    }
+
+    public function destroyRule(Supplier $supplier, int $rule)
+    {
+        $supplier->discountRules()->whereKey($rule)->delete();
+
+        return back()->with('success', 'Bonificación eliminada.');
     }
 
     public function updateProduct(Request $request, Supplier $supplier, SupplierProduct $supplierProduct, PricingService $pricing)
@@ -145,9 +187,10 @@ class SupplierController extends Controller
             'pack_quantity' => ['required', 'numeric', 'gt:0'],
         ]);
         $supplierProduct->fill($data);
-        $supplierProduct->cost = $pricing->supplierCost((float) $data['list_price'], [
-            $data['discount_1'] ?? $supplier->discount_1, $data['discount_2'] ?? $supplier->discount_2, $data['discount_3'] ?? $supplier->discount_3,
-        ], (float) $data['pack_quantity'], $supplier->prices_include_vat, (float) ($supplierProduct->product?->vat_rate ?? 21));
+        $p = $supplierProduct->product;
+        $supplierProduct->cost = $pricing->supplierCost((float) $data['list_price'],
+            app(\App\Services\SupplierDiscounts::class)->forProduct($supplier, $supplierProduct, $p?->brand_id, $p?->category_id),
+            (float) $data['pack_quantity'], (bool) $supplier->prices_include_vat, (float) ($p?->vat_rate ?? 21));
         $supplierProduct->save();
 
         return back()->with('success', 'Artículo del proveedor actualizado.');

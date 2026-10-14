@@ -2,6 +2,7 @@
 import { computed, watch } from 'vue';
 import { useForm } from '@inertiajs/vue3';
 import { Plus, X } from '@lucide/vue';
+import ProductSearch from '@/Components/ProductSearch.vue';
 import PageHeader from '@/Components/PageHeader.vue';
 import Field from '@/Components/Field.vue';
 import { money, pct, roundPrice, toNum } from '@/lib/format';
@@ -20,7 +21,25 @@ const form = useForm({
     list_prices: Object.fromEntries(props.priceLists.map((l) => [l.id, (p.prices ?? []).find((x) => x.price_list_id === l.id)?.price ?? ''])),
     supplier_products: (p.supplier_products ?? []).map((s) => ({ supplier_id: s.supplier_id, supplier_code: s.supplier_code, list_price: toNum(s.list_price), pack_quantity: toNum(s.pack_quantity) || 1 })),
     initial_stock: '',
+    type: p.type ?? 'simple',
+    components: (p.components ?? []).map((c) => ({ component_id: c.component_id, code: c.component?.code, name: c.component?.name, cost: toNum(c.component?.cost), quantity: toNum(c.quantity) })),
 });
+
+// Kits y productos fabricados: componentes / insumos
+const TYPES = {
+    simple: ['Producto simple', 'Se compra y se vende tal cual.'],
+    kit: ['Kit / combo', 'Se vende como una unidad y descuenta el stock de cada componente. No lleva stock propio.'],
+    manufactured: ['Producto fabricado', 'Tiene stock propio y se produce con una orden de producción que consume los insumos.'],
+};
+const addComponent = (c) => {
+    if (c.id === p.id || form.components.some((x) => x.component_id === c.id)) return;
+    form.components.push({ component_id: c.id, code: c.code, name: c.name, cost: toNum(c.cost), quantity: 1 });
+};
+const componentsCost = computed(() => form.components.reduce((a, c) => a + toNum(c.cost) * toNum(c.quantity), 0));
+const useComponentsCost = () => {
+    form.cost = Math.round(componentsCost.value * 10000) / 10000;
+    calcPrice();
+};
 
 // Precio ↔ margen: al cambiar costo o margen se recalcula el precio; al editar el precio, el margen
 const calcPrice = () => (form.price = roundPrice(toNum(form.cost) * (1 + toNum(form.markup) / 100) * (1 + toNum(form.vat_rate) / 100), props.rounding.step, props.rounding.mode));
@@ -61,6 +80,7 @@ const submit = () => {
         ...d,
         category_id: d.category_id || null, brand_id: d.brand_id || null, unit_id: d.unit_id || null, supplier_id: d.supplier_id || null,
         initial_stock: d.initial_stock === '' ? null : d.initial_stock,
+        components: d.type === 'simple' ? [] : d.components.map((c) => ({ component_id: c.component_id, quantity: c.quantity })),
     }));
     editing ? form.put(route('products.update', p.id)) : form.post(route('products.store'));
 };
@@ -81,6 +101,34 @@ const submit = () => {
                 <Field label="Categoría"><select v-model="form.category_id" class="input"><option value="">—</option><option v-for="c in categories" :key="c.id" :value="c.id">{{ c.name }}</option></select></Field>
                 <Field label="Marca"><select v-model="form.brand_id" class="input"><option value="">—</option><option v-for="b in brands" :key="b.id" :value="b.id">{{ b.name }}</option></select></Field>
                 <Field label="Proveedor principal"><select v-model="form.supplier_id" class="input"><option value="">—</option><option v-for="s in suppliers" :key="s.id" :value="s.id">{{ s.name }}</option></select></Field>
+            </div>
+
+            <div class="panel p-4">
+                <h2 class="panel-title mb-3">Tipo de producto</h2>
+                <div class="grid gap-2 sm:grid-cols-3">
+                    <label v-for="(t, k) in TYPES" :key="k" class="cursor-pointer rounded-md border p-3 text-sm" :class="form.type === k ? 'border-steel-800 bg-steel-50' : 'border-steel-200 hover:border-steel-400'">
+                        <input v-model="form.type" type="radio" :value="k" class="sr-only" />
+                        <div class="font-medium">{{ t[0] }}</div>
+                        <div class="mt-0.5 text-xs text-steel-500">{{ t[1] }}</div>
+                    </label>
+                </div>
+                <div v-if="form.type !== 'simple'" class="mt-4">
+                    <div class="mb-2 text-sm font-medium">{{ form.type === 'kit' ? 'Componentes del kit' : 'Insumos por unidad producida' }}</div>
+                    <ProductSearch show-cost placeholder="Agregar componente…" @select="addComponent" />
+                    <table v-if="form.components.length" class="table mt-2">
+                        <thead><tr><th>Producto</th><th class="num">Cantidad</th><th class="num">Costo</th><th></th></tr></thead>
+                        <tbody>
+                            <tr v-for="(c, i) in form.components" :key="c.component_id">
+                                <td>{{ c.name }}<div class="code">{{ c.code }}</div></td>
+                                <td class="num"><input v-model="c.quantity" type="number" step="any" min="0.0001" class="input ml-auto w-24 text-right" /></td>
+                                <td class="num">{{ money(toNum(c.cost) * toNum(c.quantity)) }}</td>
+                                <td><button type="button" class="text-steel-400 hover:text-up" @click="form.components.splice(i, 1)" aria-label="Quitar"><X class="size-4" /></button></td>
+                            </tr>
+                        </tbody>
+                        <tfoot><tr><td colspan="2" class="px-3 py-2 text-right text-sm">Costo de componentes</td><td class="num px-3 font-semibold">{{ money(componentsCost) }}</td><td><button type="button" class="text-xs whitespace-nowrap link" @click="useComponentsCost">Usar como costo</button></td></tr></tfoot>
+                    </table>
+                    <p v-if="form.errors.components" class="mt-1 text-xs text-up">{{ form.errors.components }}</p>
+                </div>
             </div>
 
             <div class="panel p-4">
@@ -142,7 +190,7 @@ const submit = () => {
                     <input v-model="form.list_prices[l.id]" type="number" step="0.01" min="0" class="input" />
                 </Field>
             </div>
-            <div v-if="initialStock" class="panel p-4">
+            <div v-if="initialStock && form.type !== 'kit'" class="panel p-4">
                 <Field label="Stock inicial en esta sucursal"><input v-model="form.initial_stock" type="number" step="any" class="input" /></Field>
             </div>
         </div>

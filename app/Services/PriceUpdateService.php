@@ -107,6 +107,9 @@ class PriceUpdateService
                 ProductPriceHistory::insert($chunk);
             }
 
+            // los kits que usan estos productos recalculan su costo
+            app(ProductStructureService::class)->refreshKitCosts($changes->map(fn ($c) => $c['product']->id)->all());
+
             $update->update([
                 'avg_cost_variation' => $costVariations ? round(array_sum($costVariations) / count($costVariations), 2) : null,
                 'avg_price_variation' => $priceVariations ? round(array_sum($priceVariations) / count($priceVariations), 2) : null,
@@ -218,6 +221,7 @@ class PriceUpdateService
                 $this->writeProduct($product, (float) $item->old_cost, (float) $item->old_price, (float) $item->old_markup, $now);
                 $count++;
             }
+            app(ProductStructureService::class)->refreshKitCosts($update->items->pluck('product_id')->all());
             $update->update(['status' => 'reverted', 'reverted_at' => $now, 'reverted_by' => auth()->id()]);
 
             return $count;

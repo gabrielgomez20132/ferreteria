@@ -91,6 +91,9 @@ class InventoryService
             $products = Product::whereIn('id', collect($items)->pluck('product_id'))->get()->keyBy('id');
             foreach ($items as $i) {
                 $product = $products->get($i['product_id']) ?? throw new BusinessException('Producto inexistente');
+                if ($product->type === 'kit' || ! $product->track_stock) {
+                    throw new BusinessException("\"{$product->name}\" no lleva stock propio (kit o modelo con variantes): transferí sus componentes.");
+                }
                 $qty = (float) $i['quantity'];
                 if ($qty <= 0) {
                     continue;

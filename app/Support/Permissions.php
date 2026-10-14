@@ -26,6 +26,7 @@ class Permissions
             'stock.adjust' => 'Ajustar stock',
             'stock.transfer' => 'Transferencias entre sucursales',
             'inventory.manage' => 'Inventario físico',
+            'production.manage' => 'Órdenes de producción',
         ],
         'Ventas' => [
             'sales.create' => 'Vender (punto de venta)',
@@ -63,7 +64,7 @@ class Permissions
         'Administrador' => ['*'],
         'Encargado' => [
             'dashboard.view', 'reports.view', 'products.view', 'products.manage', 'products.import', 'prices.manage',
-            'products.view_cost', 'stock.view', 'stock.adjust', 'stock.transfer', 'inventory.manage', 'sales.create',
+            'products.view_cost', 'stock.view', 'stock.adjust', 'stock.transfer', 'inventory.manage', 'production.manage', 'sales.create',
             'sales.view', 'sales.cancel', 'sales.return', 'customers.view', 'customers.manage', 'suppliers.view',
             'suppliers.manage', 'purchases.view', 'purchases.manage', 'cash.operate', 'cash.manage', 'expenses.manage',
         ],
@@ -71,7 +72,7 @@ class Permissions
             'products.view', 'stock.view', 'sales.create', 'sales.view', 'customers.view', 'customers.manage', 'cash.operate',
         ],
         'Depósito' => [
-            'products.view', 'stock.view', 'stock.adjust', 'stock.transfer', 'inventory.manage', 'purchases.view',
+            'products.view', 'stock.view', 'stock.adjust', 'stock.transfer', 'inventory.manage', 'production.manage', 'purchases.view',
             'purchases.manage', 'suppliers.view',
         ],
     ];

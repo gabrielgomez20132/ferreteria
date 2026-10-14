@@ -46,6 +46,11 @@ class Supplier extends Model
         return $this->hasMany(SupplierPriceImport::class);
     }
 
+    public function discountRules(): HasMany
+    {
+        return $this->hasMany(SupplierDiscountRule::class);
+    }
+
     public function purchases(): HasMany
     {
         return $this->hasMany(Purchase::class);

@@ -87,6 +87,18 @@ class PurchaseController extends Controller
         return back()->with('success', 'Compra anulada: se descontó el stock y se ajustó la cuenta del proveedor.');
     }
 
+    /** Genera pedidos en borrador por proveedor con todo lo que está bajo mínimo */
+    public function autoOrders(Request $request, PurchaseService $service)
+    {
+        $orders = $service->generateAutoOrders($this->ctx->branchId(), $request->integer('supplier_id') ?: null);
+        if ($orders->isEmpty()) {
+            return back()->with('error', 'No hay faltantes sin pedir: todo lo que está bajo mínimo ya tiene un pedido abierto.');
+        }
+
+        return redirect()->route('purchase-orders.index', ['status' => 'draft'])
+            ->with('success', "Se generaron {$orders->count()} pedidos en borrador. Revisalos y marcá \"Enviado\" cuando se los pases al proveedor.");
+    }
+
     public function suggestions(Request $request, PurchaseService $service)
     {
         return Inertia::render('Purchases/Suggestions', [

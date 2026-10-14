@@ -33,7 +33,7 @@ class ProductController extends Controller
         $branchId = $this->ctx->branchId();
 
         $products = $this->filtered($filters)
-            ->with(['category:id,name', 'brand:id,name', 'unit:id,abbreviation', 'supplier:id,name'])
+            ->with(['category:id,name', 'brand:id,name', 'unit:id,abbreviation', 'supplier:id,name'])->withCount('variants')
             ->leftJoin('product_stocks as ps', fn ($j) => $j->on('ps.product_id', '=', 'products.id')->where('ps.branch_id', $branchId))
             ->select('products.*', DB::raw('COALESCE(ps.quantity,0) as branch_stock'), DB::raw('COALESCE(ps.min_stock, products.min_stock) as branch_min'))
             ->when(($filters['stock'] ?? null) === 'low', fn ($q) => $q->whereRaw('COALESCE(ps.quantity,0) <= COALESCE(ps.min_stock, products.min_stock)')->whereRaw('COALESCE(ps.min_stock, products.min_stock) > 0'))
@@ -97,6 +97,10 @@ class ProductController extends Controller
             'is_active' => $p->is_active,
             'price_updated_at' => $p->price_updated_at?->toDateString(),
             'allow_fraction' => $p->allow_fraction,
+            'type' => $p->type,
+            'has_variants' => $p->has_variants,
+            'variants_count' => $p->variants_count ?? 0,
+            'is_variant' => (bool) $p->variant_of_id,
         ];
     }
 
@@ -108,17 +112,18 @@ class ProductController extends Controller
         $list = $request->filled('price_list_id') ? PriceList::find($request->integer('price_list_id')) : null;
         $supplierId = $request->integer('supplier_id') ?: null;
 
-        $exact = Product::where('is_active', true)->where(fn ($q) => $q->where('code', $term)->orWhere('barcode', $term)
+        $exact = Product::sellable()->where(fn ($q) => $q->where('code', $term)->orWhere('barcode', $term)
             ->orWhereHas('codes', fn ($c) => $c->where('code', $term))
             ->when($supplierId, fn ($w) => $w->orWhereHas('supplierProducts', fn ($s) => $s->where('supplier_id', $supplierId)->where('supplier_code', $term))))
             ->limit(1)->get();
 
-        $results = $exact->isNotEmpty() ? $exact : Product::where('is_active', true)->search($term)->orderBy('name')->limit(25)->get();
+        $results = $exact->isNotEmpty() ? $exact : Product::sellable()->search($term)->orderBy('name')->limit(25)->get();
         $results->load(['unit:id,abbreviation,allows_decimals', 'prices', 'stocks' => fn ($q) => $q->where('branch_id', $branchId)]);
         if ($supplierId) {
             $results->load(['supplierProducts' => fn ($q) => $q->where('supplier_id', $supplierId)]);
         }
         $canCost = $request->user()->hasPermission('products.view_cost') || $request->user()->hasPermission('purchases.manage');
+        $structure = app(\App\Services\ProductStructureService::class);
 
         return response()->json([
             'exact' => $exact->isNotEmpty(),
@@ -133,8 +138,9 @@ class ProductController extends Controller
                 'vat_rate' => (float) $p->vat_rate,
                 'unit' => $p->unit?->abbreviation ?? 'un',
                 'allow_fraction' => $p->allow_fraction,
-                'stock' => (float) ($p->stocks->first()?->quantity ?? 0),
-                'track_stock' => $p->track_stock,
+                'stock' => $p->type === 'kit' ? $structure->kitAvailable($p, $branchId) : (float) ($p->stocks->first()?->quantity ?? 0),
+                'track_stock' => $p->track_stock || $p->type === 'kit',
+                'type' => $p->type,
                 'purchase_unit_name' => $p->purchase_unit_name,
                 'purchase_unit_factor' => (float) $p->purchase_unit_factor,
                 'supplier_code' => $supplierId ? $p->supplierProducts->first()?->supplier_code : null,
@@ -147,7 +153,10 @@ class ProductController extends Controller
     public function show(Product $product)
     {
         $canCost = auth()->user()->hasPermission('products.view_cost');
-        $product->load(['category', 'brand', 'unit', 'supplier', 'codes', 'prices.priceList', 'stocks.branch',
+        $product->load(['category', 'brand', 'unit', 'supplier', 'codes', 'prices.priceList', 'stocks.branch', 'variantOf:id,code,name',
+            'components.component' => fn ($q) => $q->with(['unit:id,abbreviation', 'stocks' => fn ($s) => $s->where('branch_id', $this->ctx->branchId())]),
+            'variants' => fn ($q) => $q->with(['stocks:id,product_id,quantity'])->orderBy('name'),
+            'usedIn.product:id,code,name,type',
             'supplierProducts' => fn ($q) => $q->with('supplier:id,name,discount_1,discount_2,discount_3')->orderBy('cost')]);
 
         $lists = PriceList::where('is_active', true)->orderByDesc('is_default')->get()->map(fn ($l) => [
@@ -175,6 +184,8 @@ class ProductController extends Controller
             'movements' => $product->movements()->with('branch:id,name', 'user:id,name')->latest('created_at')->limit(50)->get(),
             'sales90' => $sales,
             'supplierProducts' => $canCost ? $product->supplierProducts : [],
+            'componentsCost' => in_array($product->type, ['kit', 'manufactured'], true) ? app(\App\Services\ProductStructureService::class)->componentsCost($product) : null,
+            'kitAvailable' => $product->type === 'kit' ? app(\App\Services\ProductStructureService::class)->kitAvailable($product, $this->ctx->branchId()) : null,
         ]);
     }
 
@@ -190,7 +201,7 @@ class ProductController extends Controller
 
     public function edit(Product $product)
     {
-        $product->load(['codes', 'prices', 'supplierProducts.supplier:id,name']);
+        $product->load(['codes', 'prices', 'supplierProducts.supplier:id,name', 'components.component:id,code,name,cost']);
 
         return Inertia::render('Products/Form', $this->formData($product));
     }
@@ -252,6 +263,10 @@ class ProductController extends Controller
             'supplier_products.*.list_price' => ['nullable', 'numeric', 'min:0'],
             'supplier_products.*.pack_quantity' => ['nullable', 'numeric', 'gt:0'],
             'initial_stock' => ['nullable', 'numeric'],
+            'type' => ['required', Rule::in(['simple', 'kit', 'manufactured'])],
+            'components' => ['array'],
+            'components.*.component_id' => ['required', 'integer'],
+            'components.*.quantity' => ['required', 'numeric', 'gt:0'],
         ];
     }
 
@@ -261,7 +276,8 @@ class ProductController extends Controller
         $product = DB::transaction(function () use ($data, $stock) {
             $product = Product::create($this->productAttributes($data) + ['average_cost' => $data['cost'], 'cost_updated_at' => now(), 'price_updated_at' => now()]);
             $this->syncRelations($product, $data);
-            if (! empty($data['initial_stock'])) {
+            app(\App\Services\ProductStructureService::class)->syncComponents($product, $data['components'] ?? []);
+            if (! empty($data['initial_stock']) && $product->type !== 'kit') {
                 $stock->move($product, $this->ctx->branchId(), (float) $data['initial_stock'], 'initial', null, (float) $data['cost'], 'Alta de producto');
             }
 
@@ -283,6 +299,7 @@ class ProductController extends Controller
             unset($attrs['cost'], $attrs['price'], $attrs['markup']);
             $product->update($attrs);
             $this->syncRelations($product, $data);
+            app(\App\Services\ProductStructureService::class)->syncComponents($product, $data['components'] ?? []);
         });
 
         return redirect()->route('products.show', $product)->with('success', 'Producto actualizado.');
@@ -292,7 +309,7 @@ class ProductController extends Controller
     {
         return collect($data)->only([
             'code', 'barcode', 'name', 'description', 'category_id', 'brand_id', 'unit_id', 'supplier_id', 'cost', 'vat_rate', 'markup',
-            'price', 'allow_fraction', 'purchase_unit_name', 'purchase_unit_factor', 'min_stock', 'location', 'track_stock', 'is_active', 'notes',
+            'price', 'allow_fraction', 'purchase_unit_name', 'purchase_unit_factor', 'min_stock', 'location', 'track_stock', 'is_active', 'notes', 'type',
         ])->map(fn ($v, $k) => $k === 'min_stock' ? ($v ?? 0) : $v)->all();
     }
 
@@ -325,13 +342,27 @@ class ProductController extends Controller
                     'supplier_code' => $sp['supplier_code'] ?? null,
                     'list_price' => $list,
                     'pack_quantity' => $pack,
-                    'cost' => $list > 0 ? $this->pricing->supplierCost($list, $supplier->discounts(), $pack, $supplier->prices_include_vat, (float) $product->vat_rate) : (float) $model->cost,
+                    'cost' => $list > 0 ? $this->pricing->supplierCost($list, app(\App\Services\SupplierDiscounts::class)->forProduct($supplier, $model->exists ? $model : null, $product->brand_id, $product->category_id), $pack, (bool) $supplier->prices_include_vat, (float) $product->vat_rate) : (float) $model->cost,
                     'is_preferred' => $product->supplier_id === $supplier->id,
                 ])->save();
                 $keep[] = $model->id;
             }
             SupplierProduct::where('product_id', $product->id)->whereNotIn('id', $keep)->delete();
         }
+    }
+
+    /** Genera variantes combinando atributos: [{name: "Medida", values: "6x40, 8x50"}] */
+    public function variants(Request $request, Product $product)
+    {
+        $data = $request->validate([
+            'attributes' => ['required', 'array', 'min:1', 'max:3'],
+            'attributes.*.name' => ['required', 'string', 'max:30'],
+            'attributes.*.values' => ['required', 'string', 'max:500'],
+        ]);
+        $attrs = collect($data['attributes'])->mapWithKeys(fn ($a) => [$a['name'] => preg_split('/\s*[,;]\s*/', $a['values'])])->all();
+        $n = app(\App\Services\ProductStructureService::class)->generateVariants($product, $attrs);
+
+        return back()->with('success', $n ? "Se crearon {$n} variantes. Cargá el stock y ajustá el precio de cada una si difiere." : 'Esas variantes ya existían.');
     }
 
     public function destroy(Product $product)

@@ -19,6 +19,8 @@ const setScope = (s) => router.get(route('dashboard'), { scope: s }, { preserveS
 const alerts = computed(() => [
     props.stats.outdated_prices && { text: `${props.stats.outdated_prices} productos con precio por debajo del margen objetivo`, href: route('prices.review'), perm: 'prices.manage' },
     props.stats.low_stock && { text: `${props.stats.low_stock} productos en o por debajo del stock mínimo`, href: route('stock.low'), perm: 'stock.view' },
+    props.stats.over_stock && { text: `${props.stats.over_stock} productos superan su stock máximo (sobrestock)`, href: route('stock.low', { mode: 'over' }), perm: 'stock.view' },
+    props.stats.pending_production && { text: `${props.stats.pending_production} órdenes de producción pendientes`, href: route('stock.production.index', { status: 'pending' }), perm: 'production.manage' },
     props.stats.overdue_customers && { text: `${props.stats.overdue_customers} clientes con deuda vencida`, href: route('customers.index', { overdue: 1 }), perm: 'customers.view' },
     ...props.incomingTransfers.map((t) => ({ text: `Transferencia #${t.number} en camino desde ${t.from_branch.name}`, href: route('stock.transfers.show', t.id), perm: 'stock.transfer' })),
 ].filter((a) => a && can(a.perm)));

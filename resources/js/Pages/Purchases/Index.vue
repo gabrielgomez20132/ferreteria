@@ -28,7 +28,7 @@ const apply = () => router.get(route('purchases.index'), Object.fromEntries(Obje
         </form>
         <div class="overflow-x-auto">
             <table class="table">
-                <thead><tr><th>Fecha</th><th>Proveedor</th><th>Comprobante</th><th>Sucursal</th><th>Vence</th><th class="num">Total</th><th>Estado</th></tr></thead>
+                <thead><tr><th>Fecha</th><th>Proveedor</th><th>Comprobante</th><th>Sucursal</th><th>Vence</th><th class="num">Total</th><th class="num">Saldo</th><th>Estado</th></tr></thead>
                 <tbody>
                     <tr v-for="p in purchases.data" :key="p.id">
                         <td>{{ date(p.date) }}</td>
@@ -37,9 +37,10 @@ const apply = () => router.get(route('purchases.index'), Object.fromEntries(Obje
                         <td>{{ p.branch?.name }}</td>
                         <td>{{ date(p.due_date) }}</td>
                         <td class="num font-medium">{{ money(p.total) }}</td>
+                        <td class="num" :class="p.status === 'confirmed' && Number(p.total) - Number(p.paid_amount) > 0.01 ? 'text-up' : 'text-steel-400'">{{ p.status === 'confirmed' ? (Number(p.total) - Number(p.paid_amount) > 0.01 ? money(Number(p.total) - Number(p.paid_amount)) : 'Pagada') : '' }}</td>
                         <td><StatusBadge :status="p.status" /></td>
                     </tr>
-                    <tr v-if="!purchases.data.length"><td colspan="7" class="py-6 text-center text-steel-500">Sin compras registradas.</td></tr>
+                    <tr v-if="!purchases.data.length"><td colspan="8" class="py-6 text-center text-steel-500">Sin compras registradas.</td></tr>
                 </tbody>
             </table>
         </div>
