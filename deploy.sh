@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Atajo del deploy. Corre git pull, npm run production, rebuild de Docker
+# Atajo del deploy. Corre git pull, npm run production en un contenedor Node 20, rebuild de Docker
 # solo si cambió la imagen, migraciones y cache.
 #
 # Uso, en el servidor:

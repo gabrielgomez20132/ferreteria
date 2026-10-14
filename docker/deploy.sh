@@ -2,7 +2,8 @@
 #
 # Deploy del día a día, en el servidor:
 #   1. git pull
-#   2. npm ci (si cambió el lock o no hay node_modules) y npm run production
+#   2. npm ci (si cambió el lock o no hay node_modules) y npm run production,
+#      dentro de un contenedor Node 20. El servidor no necesita Node instalado.
 #   3. docker compose build SOLO si cambió Dockerfile, composer o el entrypoint
 #      El build no borra datos: storage/app, logs, sesiones y public/build
 #      están montados desde el host. No se corre image prune ni compose down -v.
@@ -23,11 +24,6 @@ if [ ! -f .env ]; then
     exit 1
 fi
 
-if ! command -v npm >/dev/null 2>&1; then
-    echo "ERROR: npm no está instalado en el servidor. Hace falta Node 20 o superior para compilar el frontend." >&2
-    exit 1
-fi
-
 echo ">> Guardando el commit actual, para saber después qué trajo el pull"
 COMMIT_ANTES="$(git rev-parse HEAD)"
 
@@ -40,16 +36,14 @@ if [ "$COMMIT_ANTES" = "$COMMIT_DESPUES" ]; then
     echo ">> No había nada nuevo en git. Sigo igual, por las dudas."
 fi
 
-echo ">> Dependencias de Node"
+echo ">> npm run production (Node 20 en Docker, no en el servidor)"
+mkdir -p public/build storage/app/private storage/app/public storage/logs storage/framework/sessions
 if [ ! -d node_modules ] || git diff --name-only "$COMMIT_ANTES" "$COMMIT_DESPUES" | grep -qE '^package(-lock)?\.json$'; then
-    npm ci
+    docker compose --profile frontend run --rm --no-deps node
 else
     echo "   node_modules ya está y no cambió package-lock.json."
+    docker compose --profile frontend run --rm --no-deps --entrypoint bash node -lc "npm run production"
 fi
-
-echo ">> npm run production"
-mkdir -p public/build storage/app/private storage/app/public storage/logs storage/framework/sessions
-npm run production
 
 echo ">> Revisando si hace falta rebuildear la imagen de Docker"
 if git diff --name-only "$COMMIT_ANTES" "$COMMIT_DESPUES" | grep -qE '^(Dockerfile|composer\.(json|lock)|docker/entrypoint\.sh)$'; then

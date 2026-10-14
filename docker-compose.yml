@@ -36,6 +36,17 @@ services:
       - proxy-network
       - mysql-network
 
+  # Solo para compilar el frontend. No queda corriendo: deploy.sh lo ejecuta
+  # con `docker compose run` y se borra al terminar. El servidor no necesita Node.
+  node:
+    image: node:20-bookworm
+    profiles: ["frontend"]
+    working_dir: /app
+    volumes:
+      - .:/app
+    entrypoint: ["bash", "-lc"]
+    command: ["npm ci && npm run production"]
+
 networks:
   proxy-network:
     external: true
