@@ -1,0 +1,63 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\Customer;
+use App\Models\PriceList;
+use App\Models\Sale;
+use App\Services\CashService;
+use App\Services\SaleService;
+use App\Support\TenantContext;
+use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
+use Inertia\Inertia;
+
+class PosController extends Controller
+{
+    public function index(Request $request, CashService $cash, TenantContext $ctx)
+    {
+        $quote = null;
+        if ($request->filled('quote')) {
+            $quote = Sale::where('type', 'quote')->with('items.product', 'customer')->find($request->integer('quote'));
+        }
+
+        return Inertia::render('Pos/Index', [
+            'priceLists' => PriceList::where('is_active', true)->orderByDesc('is_default')->get(['id', 'name', 'is_default', 'adjustment_percent']),
+            'methods' => CashService::METHODS,
+            'session' => $cash->openSessionFor($request->user(), $ctx->branchId())?->load('cashRegister:id,name'),
+            'requireSession' => (bool) $ctx->setting('require_cash_session', true),
+            'consumidorFinal' => Customer::where('name', 'Consumidor Final')->first(['id', 'name']),
+            'quote' => $quote,
+            'lastSale' => $request->session()->get('last_sale'),
+        ]);
+    }
+
+    public function store(Request $request, SaleService $sales, TenantContext $ctx)
+    {
+        $data = $request->validate([
+            'type' => ['required', Rule::in(['sale', 'quote'])],
+            // 'factura' (factura electrónica ARCA) se habilitará al integrar el webservice de ARCA
+            'voucher_type' => ['nullable', Rule::in(['ticket'])],
+            'customer_id' => ['nullable', Rule::exists('customers', 'id')->where('tenant_id', $ctx->id())],
+            'price_list_id' => ['nullable', Rule::exists('price_lists', 'id')->where('tenant_id', $ctx->id())],
+            'discount_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
+            'notes' => ['nullable', 'string', 'max:500'],
+            'items' => ['required', 'array', 'min:1'],
+            'items.*.product_id' => ['required', 'integer'],
+            'items.*.quantity' => ['required', 'numeric', 'gt:0'],
+            'items.*.unit_price' => ['nullable', 'numeric', 'min:0'],
+            'items.*.discount_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
+            'payments' => ['array'],
+            'payments.*.method' => ['required', Rule::in(array_keys(CashService::METHODS))],
+            'payments.*.amount' => ['required', 'numeric', 'min:0'],
+            'payments.*.reference' => ['nullable', 'string', 'max:100'],
+        ]);
+
+        $sale = $sales->create($data, $request->user());
+        $label = $sale->type === 'quote' ? 'Presupuesto' : 'Venta';
+
+        return redirect()->route('pos')
+            ->with('success', "{$label} #{$sale->number} registrada. Total $ ".number_format((float) $sale->total, 2, ',', '.'))
+            ->with('last_sale', ['id' => $sale->id, 'number' => $sale->number, 'type' => $sale->type, 'total' => (float) $sale->total, 'change' => (float) $sale->change_amount]);
+    }
+}
