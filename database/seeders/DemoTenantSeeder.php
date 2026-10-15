@@ -423,7 +423,8 @@ class DemoTenantSeeder extends Seeder
 
         // ---------- Historial de compras (90 días) con costos en alza, para el reporte de compras ----------
         foreach ($suppliers as $supplier) {
-            $prods = Product::where('supplier_id', $supplier->id)->where('type', 'simple')->inRandomOrder()->limit(10)->get();
+            // solo productos concretos: ni kits, ni fabricados, ni el modelo que agrupa variantes
+            $prods = Product::where('supplier_id', $supplier->id)->where('type', 'simple')->where('has_variants', false)->where('is_active', true)->inRandomOrder()->limit(10)->get();
             if ($prods->isEmpty()) {
                 continue;
             }
