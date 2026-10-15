@@ -85,3 +85,33 @@
     .no-print { display: none !important; }
     html, body { background: white !important; }
 }
+
+/* Barra de desplazamiento del menú lateral: fina, oscura y sin flechas, al tono del fondo */
+.sidebar-scroll {
+    scrollbar-width: thin; /* Firefox */
+    scrollbar-color: transparent transparent;
+    transition: scrollbar-color 0.2s;
+}
+.sidebar-scroll:hover {
+    scrollbar-color: rgb(255 255 255 / 0.18) transparent;
+}
+.sidebar-scroll::-webkit-scrollbar {
+    width: 6px;
+}
+.sidebar-scroll::-webkit-scrollbar-track {
+    background: transparent;
+}
+.sidebar-scroll::-webkit-scrollbar-button {
+    display: none;
+    height: 0;
+}
+.sidebar-scroll::-webkit-scrollbar-thumb {
+    background: transparent;
+    border-radius: 9999px;
+}
+.sidebar-scroll:hover::-webkit-scrollbar-thumb {
+    background: rgb(255 255 255 / 0.18);
+}
+.sidebar-scroll::-webkit-scrollbar-thumb:hover {
+    background: rgb(255 255 255 / 0.32);
+}

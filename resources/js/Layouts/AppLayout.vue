@@ -123,7 +123,7 @@ if (typeof window !== 'undefined') {
                 <button class="ml-auto text-steel-400 lg:hidden" @click="open = false" aria-label="Cerrar menú"><X class="size-5" /></button>
             </div>
 
-            <nav class="flex-1 overflow-y-auto px-2 pb-4 text-[13.5px]">
+            <nav class="sidebar-scroll flex-1 overflow-y-auto px-2 pb-4 text-[13.5px]">
                 <div v-for="(sec, si) in sections" :key="si" class="mt-3">
                     <div v-if="sec.title" class="mb-1 px-2 text-[11px] font-medium text-steel-400" :class="sec.highlight && 'text-hazard-400'">
                         {{ sec.title }}
