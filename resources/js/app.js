@@ -10,7 +10,7 @@ const appName = 'FerreteroSoft';
 const pages = import.meta.glob('./Pages/**/*.vue');
 
 // Páginas que se muestran sin el menú lateral
-const bare = ['Auth/', 'Sales/Ticket', 'Products/Labels', 'Purchases/Orders/Print', 'Subscription/'];
+const bare = ['Auth/', 'Portal/', 'Quotes/Public', 'Sales/Ticket', 'Products/Labels', 'Purchases/Orders/Print', 'Subscription/'];
 
 createInertiaApp({
     title: (title) => (title ? `${title} · ${appName}` : appName),

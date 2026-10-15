@@ -13,6 +13,14 @@ class Sale extends Model
 
     protected $guarded = ['id'];
 
+    /** El token del link público no viaja en los listados: se expone con publicUrl() */
+    protected $hidden = ['public_token'];
+
+    /** Estado del presupuesto: pending, expired, converted, rejected (null en ventas) */
+    protected $appends = ['quote_state'];
+
+    public const QUOTE_STATES = ['pending' => 'Pendiente', 'expired' => 'Vencido', 'converted' => 'Convertido', 'rejected' => 'Rechazado'];
+
     protected function casts(): array
     {
         return [
@@ -26,6 +34,11 @@ class Sale extends Model
             'on_account_amount' => 'decimal:2',
             'returned_amount' => 'decimal:2',
             'cancelled_at' => 'datetime',
+            'valid_until' => 'date:Y-m-d',
+            'converted_at' => 'datetime',
+            'rejected_at' => 'datetime',
+            'sent_at' => 'datetime',
+            'viewed_at' => 'datetime',
         ];
     }
 
@@ -72,5 +85,66 @@ class Sale extends Model
     public function returns(): HasMany
     {
         return $this->hasMany(SaleReturn::class);
+    }
+
+    public function getQuoteStateAttribute(): ?string
+    {
+        if ($this->type !== 'quote') {
+            return null;
+        }
+
+        return match ($this->status) {
+            'converted' => 'converted',
+            'rejected' => 'rejected',
+            default => $this->valid_until && $this->valid_until->toDateString() < now()->toDateString() ? 'expired' : 'pending',
+        };
+    }
+
+    /** Presupuesto del que salió esta venta */
+    public function quote(): BelongsTo
+    {
+        return $this->belongsTo(Sale::class, 'quote_id');
+    }
+
+    /** Venta generada a partir de este presupuesto */
+    public function convertedSale(): BelongsTo
+    {
+        return $this->belongsTo(Sale::class, 'converted_sale_id');
+    }
+
+    /** Versión para mostrar al cliente (portal / link público): sin costos ni datos internos */
+    public function forCustomer(): static
+    {
+        $this->loadMissing('items');
+        $this->items->each->makeHidden(['unit_cost', 'returned_quantity', 'product_id']);
+
+        return $this->makeHidden(['cost_total', 'cash_session_id', 'price_list_id', 'notes_internal', 'tenant_id', 'cancelled_by', 'cancel_reason', 'reject_reason', 'sent_at', 'viewed_at', 'quote_id', 'converted_sale_id']);
+    }
+
+    public function publicUrl(): ?string
+    {
+        if ($this->type !== 'quote') {
+            return null;
+        }
+        if (! $this->public_token) {
+            $this->forceFill(['public_token' => \Illuminate\Support\Str::random(40)])->saveQuietly();
+        }
+
+        return route('quote.public', $this->public_token);
+    }
+
+    /** Scope por estado de presupuesto (los vencidos se calculan por fecha) */
+    public function scopeQuoteState($q, ?string $state)
+    {
+        $today = now()->toDateString();
+
+        return match ($state) {
+            'pending' => $q->where('status', 'quote')->where(fn ($w) => $w->whereNull('valid_until')->orWhere('valid_until', '>=', $today)),
+            'expired' => $q->where('status', 'quote')->where('valid_until', '<', $today),
+            'open' => $q->where('status', 'quote'),
+            'converted' => $q->where('status', 'converted'),
+            'rejected' => $q->where('status', 'rejected'),
+            default => $q,
+        };
     }
 }

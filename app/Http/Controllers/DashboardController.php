@@ -81,6 +81,18 @@ class DashboardController extends Controller
             ->when($scope === 'branch', fn ($q) => $q->where('sales.branch_id', $branchId))
             ->selectRaw('method, SUM(amount) total')->groupBy('method')->get();
 
+        // Presupuestos y compras
+        $quotes = fn () => Sale::where('type', 'quote')->when($scope === 'branch', fn ($q) => $q->where('branch_id', $branchId));
+        $quoteStats = $quotes()->quoteState('pending')
+            ->selectRaw('COUNT(*) c, COALESCE(SUM(total),0) t, SUM(valid_until <= ?) expiring', [now()->addDays(3)->toDateString()])->first();
+        $quoteMonth = $quotes()->where('created_at', '>=', $month)
+            ->selectRaw("COUNT(*) c, SUM(status = 'converted') conv")->first();
+        $purchMonth = \App\Models\Purchase::where('status', 'confirmed')->where('date', '>=', $month->toDateString())
+            ->when($scope === 'branch', fn ($q) => $q->where('branch_id', $branchId))
+            ->selectRaw('COUNT(*) c, COALESCE(SUM(total),0) t')->first();
+        $payablesOverdue = (float) \App\Models\Purchase::where('status', 'confirmed')->where('due_date', '<', now()->toDateString())
+            ->whereRaw('total - paid_amount > 0.009')->sum(DB::raw('total - paid_amount'));
+
         return Inertia::render('Dashboard', [
             'scope' => $scope,
             'stats' => [
@@ -99,6 +111,14 @@ class DashboardController extends Controller
                 'outdated_prices' => Product::where('is_active', true)->whereRaw(PricingService::outdatedSql())->count(),
                 'receivables' => (float) Customer::where('balance', '>', 0)->sum('balance'),
                 'payables' => (float) Supplier::where('balance', '>', 0)->sum('balance'),
+                'quotes_pending' => (int) $quoteStats->c,
+                'quotes_pending_amount' => (float) $quoteStats->t,
+                'quotes_expiring' => (int) $quoteStats->expiring,
+                'quotes_month' => (int) $quoteMonth->c,
+                'quotes_month_converted' => (int) $quoteMonth->conv,
+                'purchases_month' => (float) $purchMonth->t,
+                'purchases_month_count' => (int) $purchMonth->c,
+                'payables_overdue' => $payablesOverdue,
                 'overdue_customers' => Customer::whereHas('movements', fn ($q) => $q->where('pending_amount', '>', 0)->where('due_date', '<', now()->toDateString()))->count(),
             ],
             'chart' => $chart,

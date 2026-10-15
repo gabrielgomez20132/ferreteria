@@ -65,5 +65,10 @@ const submit = () => form.put(route('settings.company.update'), { preserveScroll
             <Field label="Encabezado"><textarea v-model="form.settings.ticket_header" rows="2" class="input" placeholder="Ej.: Horario de atención…" /></Field>
             <Field label="Pie"><textarea v-model="form.settings.ticket_footer" rows="2" class="input" /></Field>
         </div>
+        <div class="panel space-y-3 p-4">
+            <h2 class="panel-title">Presupuestos</h2>
+            <Field label="Validez (días)" hint="Se puede cambiar en cada presupuesto"><input v-model="form.settings.quote_validity_days" type="number" min="1" max="365" class="input w-28" /></Field>
+            <Field label="Condiciones comerciales" hint="Aparecen al pie del presupuesto en PDF y en el link que recibe el cliente"><textarea v-model="form.settings.quote_terms" rows="3" class="input" /></Field>
+        </div>
     </div>
 </template>

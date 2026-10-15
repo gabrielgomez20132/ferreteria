@@ -12,6 +12,7 @@ use App\Models\User;
 use App\Support\Numbering;
 use App\Support\TenantContext;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use App\Support\BusinessException;
 
 class SaleService
@@ -29,6 +30,7 @@ class SaleService
      *
      * $data = [
      *   type: sale|quote, customer_id?, price_list_id?, discount_percent?, notes?,
+     *   quote_id? (venta que convierte un presupuesto), valid_until?, terms? (presupuestos),
      *   items: [{product_id, quantity, unit_price?, discount_percent?}],
      *   payments: [{method, amount, reference?}]
      * ]
@@ -47,6 +49,15 @@ class SaleService
             $priceList = ! empty($data['price_list_id']) ? PriceList::find($data['price_list_id'])
                 : ($customer?->priceList ?? PriceList::where('is_default', true)->first());
 
+            // Venta que convierte un presupuesto
+            $quote = null;
+            if (! $isQuote && ! empty($data['quote_id'])) {
+                $quote = Sale::where('type', 'quote')->lockForUpdate()->with('items')->findOrFail($data['quote_id']);
+                if ($quote->status === 'converted') {
+                    throw new BusinessException("El presupuesto #{$quote->number} ya se convirtió en venta.");
+                }
+            }
+
             $session = null;
             if (! $isQuote) {
                 $session = $this->cash->openSessionFor($user, $branchId);
@@ -55,49 +66,8 @@ class SaleService
                 }
             }
 
-            $maxDiscount = $user->maxDiscount();
-            $canOverride = $user->hasPermission('sales.price_override');
-            $products = Product::with('prices', 'components.component')->whereIn('id', collect($data['items'])->pluck('product_id'))->get()->keyBy('id');
-
-            $lines = [];
-            $subtotal = 0;
-            $costTotal = 0;
-            foreach ($data['items'] as $item) {
-                $product = $products->get($item['product_id']) ?? throw new BusinessException('Producto inexistente.');
-                if ($product->has_variants) {
-                    throw new BusinessException("\"{$product->name}\" tiene variantes: elegí la medida/color concreta.");
-                }
-                $qty = round((float) $item['quantity'], 3);
-                if ($qty <= 0) {
-                    throw new BusinessException("Cantidad inválida para \"{$product->name}\".");
-                }
-                if (! $product->allow_fraction && floor($qty) != $qty) {
-                    throw new BusinessException("\"{$product->name}\" no se vende fraccionado.");
-                }
-                $listPrice = $this->pricing->priceFor($product, $priceList);
-                $unitPrice = $listPrice;
-                if (isset($item['unit_price']) && abs((float) $item['unit_price'] - $listPrice) > 0.001) {
-                    if (! $canOverride) {
-                        throw new BusinessException('No tiene permiso para modificar precios.');
-                    }
-                    $unitPrice = round((float) $item['unit_price'], 2);
-                }
-                $disc = (float) ($item['discount_percent'] ?? 0);
-                if ($disc < 0 || $disc > $maxDiscount) {
-                    throw new BusinessException('Descuento no autorizado (máximo '.$maxDiscount.'%).');
-                }
-                $lineTotal = round($qty * $unitPrice * (1 - $disc / 100), 2);
-                $subtotal += $lineTotal;
-                $costTotal += $qty * (float) $product->cost;
-                $lines[] = compact('product', 'qty', 'unitPrice', 'disc', 'lineTotal');
-            }
-
-            $globalDisc = (float) ($data['discount_percent'] ?? 0);
-            if ($globalDisc < 0 || $globalDisc > $maxDiscount) {
-                throw new BusinessException('Descuento no autorizado (máximo '.$maxDiscount.'%).');
-            }
-            $discountAmount = round($subtotal * $globalDisc / 100, 2);
-            $total = round($subtotal - $discountAmount, 2);
+            $c = $this->computeLines($data, $user, $priceList, $quote);
+            ['lines' => $lines, 'subtotal' => $subtotal, 'costTotal' => $costTotal, 'globalDisc' => $globalDisc, 'discountAmount' => $discountAmount, 'total' => $total] = $c;
 
             // ---- Pagos ----
             $payments = collect($data['payments'] ?? [])->filter(fn ($p) => (float) $p['amount'] > 0)->values();
@@ -134,8 +104,12 @@ class SaleService
                 'user_id' => $user->id,
                 'cash_session_id' => $session?->id,
                 'price_list_id' => $priceList?->id,
+                'quote_id' => $quote?->id,
                 'status' => $isQuote ? 'quote' : 'completed',
                 'voucher_type' => $isQuote ? 'presupuesto' : ($data['voucher_type'] ?? 'ticket'),
+                'valid_until' => $isQuote ? ($data['valid_until'] ?? now()->addDays((int) $this->context->setting('quote_validity_days', 7))->toDateString()) : null,
+                'terms' => $isQuote ? ($data['terms'] ?? $this->context->setting('quote_terms')) : null,
+                'public_token' => $isQuote ? Str::random(40) : null,
                 'subtotal' => round($subtotal, 2),
                 'discount_percent' => $globalDisc,
                 'discount_amount' => $discountAmount,
@@ -147,20 +121,9 @@ class SaleService
                 'notes' => $data['notes'] ?? null,
             ]);
 
-            foreach ($lines as $l) {
-                SaleItem::create([
-                    'sale_id' => $sale->id,
-                    'product_id' => $l['product']->id,
-                    'code' => $l['product']->code,
-                    'description' => $l['product']->name,
-                    'quantity' => $l['qty'],
-                    'unit_price' => $l['unitPrice'],
-                    'discount_percent' => $l['disc'],
-                    'subtotal' => $l['lineTotal'],
-                    'unit_cost' => $l['product']->cost,
-                    'vat_rate' => $l['product']->vat_rate,
-                ]);
-                if (! $isQuote) {
+            $this->createItems($sale, $lines);
+            if (! $isQuote) {
+                foreach ($lines as $l) {
                     $this->stock->moveProduct($l['product'], $branchId, -$l['qty'], 'sale', $sale, null, "Venta #{$sale->number}", true);
                 }
             }
@@ -180,8 +143,127 @@ class SaleService
                 $this->accounts->chargeCustomer($customer, $onAccount, 'sale', "Venta #{$sale->number}", $sale);
             }
 
+            if ($quote) {
+                $quote->update(['status' => 'converted', 'converted_sale_id' => $sale->id, 'converted_at' => now(), 'rejected_at' => null, 'reject_reason' => null]);
+            }
+
             return $sale;
         });
+    }
+
+    /** Modifica los ítems, el cliente y las condiciones de un presupuesto abierto (conserva número y link) */
+    public function updateQuote(Sale $quote, array $data, User $user): Sale
+    {
+        if ($quote->type !== 'quote' || $quote->status !== 'quote') {
+            throw new BusinessException('Solo se pueden modificar presupuestos pendientes o vencidos.');
+        }
+
+        return DB::transaction(function () use ($quote, $data, $user) {
+            $quote->load('items');
+            $customer = ! empty($data['customer_id']) ? Customer::findOrFail($data['customer_id']) : null;
+            $priceList = ! empty($data['price_list_id']) ? PriceList::find($data['price_list_id'])
+                : ($customer?->priceList ?? PriceList::where('is_default', true)->first());
+            $c = $this->computeLines($data, $user, $priceList, $quote);
+
+            $quote->items()->delete();
+            $this->createItems($quote, $c['lines']);
+            $quote->update([
+                'customer_id' => $customer?->id,
+                'price_list_id' => $priceList?->id,
+                'subtotal' => round($c['subtotal'], 2),
+                'discount_percent' => $c['globalDisc'],
+                'discount_amount' => $c['discountAmount'],
+                'total' => $c['total'],
+                'cost_total' => round($c['costTotal'], 2),
+                'notes' => $data['notes'] ?? $quote->notes,
+                // al modificarlo se renueva la validez si estaba vencido
+                'valid_until' => $data['valid_until'] ?? ($quote->quote_state === 'expired'
+                    ? now()->addDays((int) $this->context->setting('quote_validity_days', 7))->toDateString()
+                    : $quote->valid_until?->toDateString()),
+            ]);
+
+            return $quote->fresh();
+        });
+    }
+
+    /**
+     * Calcula líneas y totales validando precios y descuentos.
+     * Si viene de un presupuesto vigente, se respetan sus precios y descuentos aunque el usuario
+     * no tenga permiso para cambiarlos (el precio quedó comprometido con el cliente).
+     */
+    private function computeLines(array $data, User $user, ?PriceList $priceList, ?Sale $quote = null): array
+    {
+        $honor = $quote && $quote->quote_state === 'pending';
+        $quoted = $honor ? $quote->items->keyBy('product_id') : collect();
+        $maxDiscount = $user->maxDiscount();
+        $canOverride = $user->hasPermission('sales.price_override');
+        $products = Product::with('prices', 'components.component')->whereIn('id', collect($data['items'])->pluck('product_id'))->get()->keyBy('id');
+
+        $lines = [];
+        $subtotal = 0;
+        $costTotal = 0;
+        foreach ($data['items'] as $item) {
+            $product = $products->get($item['product_id']) ?? throw new BusinessException('Producto inexistente.');
+            if ($product->has_variants) {
+                throw new BusinessException("\"{$product->name}\" tiene variantes: elegí la medida/color concreta.");
+            }
+            $qty = round((float) $item['quantity'], 3);
+            if ($qty <= 0) {
+                throw new BusinessException("Cantidad inválida para \"{$product->name}\".");
+            }
+            if (! $product->allow_fraction && floor($qty) != $qty) {
+                throw new BusinessException("\"{$product->name}\" no se vende fraccionado.");
+            }
+            $q = $quoted->get($product->id);
+            $listPrice = $this->pricing->priceFor($product, $priceList);
+            $unitPrice = $listPrice;
+            if (isset($item['unit_price']) && abs((float) $item['unit_price'] - $listPrice) > 0.001) {
+                $isQuotedPrice = $q && abs((float) $item['unit_price'] - (float) $q->unit_price) < 0.001;
+                if (! $canOverride && ! $isQuotedPrice) {
+                    throw new BusinessException('No tiene permiso para modificar precios.');
+                }
+                $unitPrice = round((float) $item['unit_price'], 2);
+            }
+            $disc = (float) ($item['discount_percent'] ?? 0);
+            $isQuotedDisc = $q && abs($disc - (float) $q->discount_percent) < 0.001;
+            if ($disc < 0 || ($disc > $maxDiscount && ! $isQuotedDisc)) {
+                throw new BusinessException('Descuento no autorizado (máximo '.$maxDiscount.'%).');
+            }
+            $lineTotal = round($qty * $unitPrice * (1 - $disc / 100), 2);
+            $subtotal += $lineTotal;
+            $costTotal += $qty * (float) $product->cost;
+            $lines[] = compact('product', 'qty', 'unitPrice', 'disc', 'lineTotal');
+        }
+
+        $globalDisc = (float) ($data['discount_percent'] ?? 0);
+        $isQuotedGlobal = $honor && abs($globalDisc - (float) $quote->discount_percent) < 0.001;
+        if ($globalDisc < 0 || ($globalDisc > $maxDiscount && ! $isQuotedGlobal)) {
+            throw new BusinessException('Descuento no autorizado (máximo '.$maxDiscount.'%).');
+        }
+        $discountAmount = round($subtotal * $globalDisc / 100, 2);
+
+        return [
+            'lines' => $lines, 'subtotal' => $subtotal, 'costTotal' => $costTotal, 'globalDisc' => $globalDisc,
+            'discountAmount' => $discountAmount, 'total' => round($subtotal - $discountAmount, 2),
+        ];
+    }
+
+    private function createItems(Sale $sale, array $lines): void
+    {
+        foreach ($lines as $l) {
+            SaleItem::create([
+                'sale_id' => $sale->id,
+                'product_id' => $l['product']->id,
+                'code' => $l['product']->code,
+                'description' => $l['product']->name,
+                'quantity' => $l['qty'],
+                'unit_price' => $l['unitPrice'],
+                'discount_percent' => $l['disc'],
+                'subtotal' => $l['lineTotal'],
+                'unit_cost' => $l['product']->cost,
+                'vat_rate' => $l['product']->vat_rate,
+            ]);
+        }
     }
 
     /** Anulación total con reversión de stock, caja y cuenta corriente */
@@ -215,6 +297,11 @@ class SaleService
             }
 
             $sale->update(['status' => 'cancelled', 'cancelled_at' => now(), 'cancelled_by' => $user->id, 'cancel_reason' => $reason]);
+            // Si la venta venía de un presupuesto, el presupuesto vuelve a quedar abierto
+            if ($sale->quote_id) {
+                Sale::where('id', $sale->quote_id)->where('converted_sale_id', $sale->id)
+                    ->update(['status' => 'quote', 'converted_sale_id' => null, 'converted_at' => null]);
+            }
 
             return $sale;
         });

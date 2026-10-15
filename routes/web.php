@@ -9,6 +9,7 @@ use App\Http\Controllers\CashController;
 use App\Http\Controllers\CatalogController;
 use App\Http\Controllers\CompanySettingsController;
 use App\Http\Controllers\CustomerController;
+use App\Http\Controllers\CustomerPortalController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\ExpenseController;
 use App\Http\Controllers\InventoryCountController;
@@ -19,6 +20,7 @@ use App\Http\Controllers\PriceUpdateController;
 use App\Http\Controllers\ProductController;
 use App\Http\Controllers\PurchaseController;
 use App\Http\Controllers\PurchaseOrderController;
+use App\Http\Controllers\QuoteController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\RoleController;
 use App\Http\Controllers\SaleController;
@@ -36,6 +38,15 @@ Route::middleware('guest')->group(function () {
     Route::get('/registro', [AuthController::class, 'showRegister'])->name('register');
     Route::post('/registro', [AuthController::class, 'register'])->middleware('throttle:5,1');
 });
+// ---------- Portal de clientes (público, con link secreto) ----------
+Route::prefix('portal')->name('portal.')->middleware('throttle:60,1')->group(function () {
+    Route::get('/{token}', [CustomerPortalController::class, 'show'])->name('show');
+    Route::get('/{token}/comprobantes/{sale}', [CustomerPortalController::class, 'sale'])->name('sale')->whereNumber('sale');
+});
+
+// ---------- Presupuesto público (link que recibe el cliente) ----------
+Route::get('/p/{token}', [QuoteController::class, 'public'])->name('quote.public')->middleware('throttle:60,1');
+
 Route::post('/logout', [AuthController::class, 'logout'])->middleware('auth')->name('logout');
 
 Route::middleware('auth')->group(function () {
@@ -155,6 +166,19 @@ Route::middleware('auth')->group(function () {
         Route::post('/{sale}/devolucion', [SaleController::class, 'return'])->name('return')->middleware('permission:sales.return');
     });
 
+    Route::prefix('presupuestos')->name('quotes.')->group(function () {
+        Route::get('/', [QuoteController::class, 'index'])->name('index')->middleware('permission:sales.view|sales.create');
+        Route::get('/{quote}', [QuoteController::class, 'show'])->name('show')->middleware('permission:sales.view|sales.create')->whereNumber('quote');
+        Route::get('/{quote}/pdf', [QuoteController::class, 'pdfData'])->name('pdf')->middleware('permission:sales.view|sales.create')->whereNumber('quote');
+        Route::middleware('permission:sales.create')->group(function () {
+            Route::put('/{quote}', [QuoteController::class, 'update'])->name('update');
+            Route::patch('/{quote}/datos', [QuoteController::class, 'details'])->name('details');
+            Route::post('/{quote}/rechazar', [QuoteController::class, 'reject'])->name('reject');
+            Route::post('/{quote}/reabrir', [QuoteController::class, 'reopen'])->name('reopen');
+            Route::post('/{quote}/enviado', [QuoteController::class, 'sent'])->name('sent');
+        });
+    });
+
     Route::prefix('clientes')->name('customers.')->group(function () {
         Route::get('/', [CustomerController::class, 'index'])->name('index')->middleware('permission:customers.view');
         Route::get('/buscar', [CustomerController::class, 'search'])->name('search')->middleware('permission:customers.view|sales.create');
@@ -164,6 +188,8 @@ Route::middleware('auth')->group(function () {
             Route::delete('/{customer}', [CustomerController::class, 'destroy'])->name('destroy');
             Route::post('/{customer}/pagos', [CustomerController::class, 'payment'])->name('payment');
             Route::post('/{customer}/ajuste', [CustomerController::class, 'adjust'])->name('adjust');
+            Route::post('/{customer}/portal', [CustomerController::class, 'enablePortal'])->name('portal.enable');
+            Route::delete('/{customer}/portal', [CustomerController::class, 'disablePortal'])->name('portal.disable');
         });
         Route::get('/{customer}', [CustomerController::class, 'show'])->name('show')->middleware('permission:customers.view');
     });
@@ -236,6 +262,12 @@ Route::middleware('auth')->group(function () {
         Route::get('/stock-valorizado', [ReportController::class, 'valuation'])->name('valuation');
         Route::get('/sin-rotacion', [ReportController::class, 'noRotation'])->name('no-rotation');
         Route::get('/bajo-margen', [ReportController::class, 'lowMargin'])->name('low-margin');
+        Route::get('/clientes', [ReportController::class, 'customers'])->name('customers');
+        Route::get('/clientes/exportar', [ReportController::class, 'customersExport'])->name('customers.export');
+        Route::get('/compras', [ReportController::class, 'purchases'])->name('purchases');
+        Route::get('/compras/exportar', [ReportController::class, 'purchasesExport'])->name('purchases.export');
+        Route::get('/presupuestos', [ReportController::class, 'quotes'])->name('quotes');
+        Route::get('/presupuestos/exportar', [ReportController::class, 'quotesExport'])->name('quotes.export');
         Route::get('/cuentas-corrientes', [ReportController::class, 'accounts'])->name('accounts');
         Route::get('/resultados', [ReportController::class, 'results'])->name('results');
     });

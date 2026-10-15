@@ -33,6 +33,7 @@ const showTicket = ref(false);
         <template #subtitle>
             <p class="mt-0.5 flex flex-wrap items-center gap-2 text-sm text-steel-500">
                 {{ datetime(s.created_at) }} · {{ s.branch?.name }} · {{ s.user?.name }} <StatusBadge :status="s.status" />
+                <Link v-if="s.quote" :href="route('quotes.show', s.quote.id)" class="link">desde el presupuesto #{{ s.quote.number }}</Link>
             </p>
         </template>
         <button class="btn-secondary" @click="showTicket = true"><Printer class="size-4" /> Comprobante</button>

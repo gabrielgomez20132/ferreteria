@@ -135,7 +135,7 @@ class SalesAndPurchasesTest extends TestCase
             'purchases.create', 'purchases.suggestions', 'purchase-orders.index', 'cash.index', 'cash.history', 'expenses.index', 'stock.index', 'stock.movements',
             'stock.low', 'stock.adjust', 'stock.transfers.index', 'stock.inventory.index', 'price-imports.index', 'prices.updates', 'prices.mass',
             'prices.review', 'prices.comparison', 'reports.index', 'reports.sales', 'reports.profitability', 'reports.valuation', 'reports.no-rotation',
-            'reports.low-margin', 'reports.accounts', 'reports.results', 'settings.company', 'branches.index', 'users.index', 'roles.index', 'audit.index',
+            'reports.low-margin', 'reports.accounts', 'reports.customers', 'reports.purchases', 'reports.quotes', 'quotes.index', 'reports.results', 'settings.company', 'branches.index', 'users.index', 'roles.index', 'audit.index',
             'products.import'] as $route) {
             $this->get(route($route))->assertOk();
         }

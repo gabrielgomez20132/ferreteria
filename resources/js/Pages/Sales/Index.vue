@@ -15,7 +15,7 @@ const apply = () => router.get(route('sales.index'), Object.fromEntries(Object.e
     <PageHeader :title="f.type === 'quote' ? 'Presupuestos' : 'Ventas'">
         <div class="inline-flex rounded-md border border-steel-300 bg-white p-0.5 text-sm">
             <button class="rounded px-2.5 py-1" :class="f.type === 'sale' ? 'bg-steel-800 text-white' : 'text-steel-600'" @click="f.type = 'sale'; apply()">Ventas</button>
-            <button class="rounded px-2.5 py-1" :class="f.type === 'quote' ? 'bg-steel-800 text-white' : 'text-steel-600'" @click="f.type = 'quote'; apply()">Presupuestos</button>
+            <Link :href="route('quotes.index')" class="rounded px-2.5 py-1 text-steel-600">Presupuestos</Link>
         </div>
     </PageHeader>
 

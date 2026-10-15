@@ -26,6 +26,8 @@ class Tenant extends Model
         'ticket_footer' => '¡Gracias por su compra!',
         'cost_update_policy' => 'always', // always | main_supplier | if_cheaper
         'default_price_action' => 'keep_markup',
+        'quote_validity_days' => 7,
+        'quote_terms' => "Precios con IVA incluido. Una vez vencido el presupuesto, los precios pueden variar sin previo aviso.\nForma de pago: a convenir.",
     ];
 
     protected function casts(): array

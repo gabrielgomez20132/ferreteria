@@ -1,17 +1,17 @@
 <script setup>
 import { ref } from 'vue';
 import { Link, router, useForm } from '@inertiajs/vue3';
-import { Pencil, HandCoins, Trash2 } from '@lucide/vue';
+import { Pencil, HandCoins, Trash2, Link2, Copy, MessageCircle, ExternalLink, RefreshCw, BarChart3 } from '@lucide/vue';
 import PageHeader from '@/Components/PageHeader.vue';
 import Pagination from '@/Components/Pagination.vue';
 import StatusBadge from '@/Components/StatusBadge.vue';
 import Modal from '@/Components/Modal.vue';
 import Field from '@/Components/Field.vue';
 import CustomerModal from '@/Components/CustomerModal.vue';
-import { money, date, datetime } from '@/lib/format';
+import { money, date, datetime, today } from '@/lib/format';
 import { useCan } from '@/lib/can';
 
-const props = defineProps({ customer: Object, movements: Object, sales: Array, overdue: Number, methods: Object, priceLists: Array });
+const props = defineProps({ portal: Object, customer: Object, movements: Object, sales: Array, overdue: Number, methods: Object, priceLists: Array });
 const can = useCan();
 const showEdit = ref(false);
 const showPay = ref(false);
@@ -22,6 +22,27 @@ const adjust = useForm({ amount: '', description: '' });
 const doPay = () => pay.post(route('customers.payment', props.customer.id), { preserveScroll: true, onSuccess: () => { showPay.value = false; pay.reset(); } });
 const doAdjust = () => adjust.post(route('customers.adjust', props.customer.id), { preserveScroll: true, onSuccess: () => { showAdjust.value = false; adjust.reset(); } });
 const destroy = () => confirm('¿Eliminar este cliente?') && router.delete(route('customers.destroy', props.customer.id));
+// ---- Portal del cliente ----
+const copied = ref(false);
+const enablePortal = (msg) => (!msg || confirm(msg)) && router.post(route('customers.portal.enable', props.customer.id), {}, { preserveScroll: true });
+const disablePortal = () => confirm('¿Deshabilitar el portal? El link dejará de funcionar.') && router.delete(route('customers.portal.disable', props.customer.id), { preserveScroll: true });
+async function copyPortal() {
+    try {
+        await navigator.clipboard.writeText(props.portal.url);
+    } catch {
+        window.prompt('Copiá el link:', props.portal.url);
+    }
+    copied.value = true;
+    setTimeout(() => (copied.value = false), 2000);
+}
+function sendPortal() {
+    const phone = String(props.customer.phone ?? '').replace(/\D/g, '');
+    const number = phone ? (phone.startsWith('54') ? phone : `549${phone.replace(/^0/, '')}`) : '';
+    const text = `Hola ${props.customer.name}, en este link podés ver tu resumen de cuenta, los comprobantes, lo pendiente de pago y tus pagos:\n${props.portal.url}`;
+    window.open(`https://wa.me/${number}?text=${encodeURIComponent(text)}`, '_blank');
+}
+const openPortal = () => window.open(props.portal.url, '_blank');
+
 const TYPES = { sale: 'Venta', payment: 'Pago', return: 'Devolución', adjustment: 'Ajuste', cancel: 'Anulación' };
 </script>
 
@@ -70,8 +91,35 @@ const TYPES = { sale: 'Venta', payment: 'Pago', return: 'Devolución', adjustmen
             </div>
             <Pagination :data="movements" />
         </div>
+        <div class="space-y-4">
         <div class="panel">
-            <div class="panel-head"><h2 class="panel-title">Últimas compras</h2></div>
+            <div class="panel-head"><h2 class="panel-title flex items-center gap-2"><Link2 class="size-4 text-steel-500" /> Portal del cliente</h2></div>
+            <div class="p-4 text-sm">
+                <template v-if="portal.url">
+                    <p class="text-steel-600">Con este link el cliente ve su resumen de cuenta, comprobantes, pendientes y pagos, y los descarga en PDF.</p>
+                    <input :value="portal.url" readonly class="input mt-2 font-mono text-xs" @focus="$event.target.select()" />
+                    <div class="mt-2 grid grid-cols-2 gap-2">
+                        <button class="btn-secondary btn-sm" @click="copyPortal"><Copy class="size-4" /> {{ copied ? '¡Copiado!' : 'Copiar' }}</button>
+                        <button class="btn-secondary btn-sm" @click="sendPortal"><MessageCircle class="size-4" /> WhatsApp</button>
+                        <button class="btn-secondary btn-sm" @click="openPortal"><ExternalLink class="size-4" /> Abrir</button>
+                        <button v-if="can('customers.manage')" class="btn-secondary btn-sm" @click="enablePortal('Se genera un link nuevo y el actual deja de funcionar. ¿Continuar?')"><RefreshCw class="size-4" /> Link nuevo</button>
+                    </div>
+                    <div class="mt-2 flex items-center justify-between text-xs text-steel-500">
+                        <span>{{ portal.last_seen_at ? 'Última visita ' + datetime(portal.last_seen_at) : 'El cliente todavía no entró' }}</span>
+                        <button v-if="can('customers.manage')" class="link text-up" @click="disablePortal">Deshabilitar</button>
+                    </div>
+                </template>
+                <template v-else>
+                    <p class="text-steel-600">Compartí un link para que el cliente consulte su cuenta corriente y descargue sus comprobantes sin llamarte.</p>
+                    <button v-if="can('customers.manage')" class="btn-primary btn-sm mt-3" @click="enablePortal()"><Link2 class="size-4" /> Habilitar portal</button>
+                </template>
+            </div>
+        </div>
+        <div class="panel">
+            <div class="panel-head">
+                <h2 class="panel-title">Últimas compras</h2>
+                <Link v-if="can('reports.view')" :href="route('reports.customers', { customer_id: customer.id, from: today(-365), to: today() })" class="link flex items-center gap-1 text-sm"><BarChart3 class="size-4" /> Qué compra</Link>
+            </div>
             <div class="divide-y divide-steel-100">
                 <Link v-for="s in sales" :key="s.id" :href="route('sales.show', s.id)" class="flex items-center justify-between px-4 py-2 text-sm hover:bg-steel-50">
                     <span>#{{ s.number }} · {{ date(s.created_at) }}</span>
@@ -79,6 +127,7 @@ const TYPES = { sale: 'Venta', payment: 'Pago', return: 'Devolución', adjustmen
                 </Link>
                 <div v-if="!sales.length" class="px-4 py-3 text-sm text-steel-500">Sin compras registradas.</div>
             </div>
+        </div>
         </div>
     </div>
 

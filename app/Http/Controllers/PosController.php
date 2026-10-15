@@ -16,9 +16,16 @@ class PosController extends Controller
 {
     public function index(Request $request, CashService $cash, TenantContext $ctx)
     {
+        // Presupuesto cargado: convert (cobrarlo), edit (modificarlo) o copy (duplicarlo como uno nuevo)
         $quote = null;
+        $quoteMode = in_array($request->input('mode'), ['edit', 'copy'], true) ? $request->input('mode') : 'convert';
         if ($request->filled('quote')) {
             $quote = Sale::where('type', 'quote')->with('items.product', 'customer')->find($request->integer('quote'));
+            if ($quote && $quoteMode !== 'copy' && $quote->status !== 'quote') {
+                return redirect()->route('quotes.show', $quote)->with('error', $quote->status === 'converted'
+                    ? "El presupuesto #{$quote->number} ya se convirtió en venta."
+                    : "El presupuesto #{$quote->number} está rechazado: reabrilo primero.");
+            }
         }
 
         return Inertia::render('Pos/Index', [
@@ -28,6 +35,7 @@ class PosController extends Controller
             'requireSession' => (bool) $ctx->setting('require_cash_session', true),
             'consumidorFinal' => Customer::where('name', 'Consumidor Final')->first(['id', 'name']),
             'quote' => $quote,
+            'quoteMode' => $quote ? $quoteMode : null,
             'lastSale' => $request->session()->get('last_sale'),
         ]);
     }
@@ -38,6 +46,7 @@ class PosController extends Controller
             'type' => ['required', Rule::in(['sale', 'quote'])],
             // 'factura' (factura electrónica ARCA) se habilitará al integrar el webservice de ARCA
             'voucher_type' => ['nullable', Rule::in(['ticket'])],
+            'quote_id' => ['nullable', Rule::exists('sales', 'id')->where('tenant_id', $ctx->id())->where('type', 'quote')],
             'customer_id' => ['nullable', Rule::exists('customers', 'id')->where('tenant_id', $ctx->id())],
             'price_list_id' => ['nullable', Rule::exists('price_lists', 'id')->where('tenant_id', $ctx->id())],
             'discount_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
@@ -54,10 +63,9 @@ class PosController extends Controller
         ]);
 
         $sale = $sales->create($data, $request->user());
-        $label = $sale->type === 'quote' ? 'Presupuesto' : 'Venta';
 
         return redirect()->route('pos')
-            ->with('success', "{$label} #{$sale->number} registrada. Total $ ".number_format((float) $sale->total, 2, ',', '.'))
+            ->with('success', ($sale->type === 'quote' ? "Presupuesto #{$sale->number} guardado" : "Venta #{$sale->number} registrada").($sale->quote_id ? ' a partir del presupuesto #'.$sale->quote()->value('number') : '').'. Total $ '.number_format((float) $sale->total, 2, ',', '.'))
             ->with('last_sale', ['id' => $sale->id, 'number' => $sale->number, 'type' => $sale->type, 'total' => (float) $sale->total, 'change' => (float) $sale->change_amount]);
     }
 }

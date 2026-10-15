@@ -1,6 +1,6 @@
 <script setup>
 import { Link } from '@inertiajs/vue3';
-import { BarChart3, TrendingUp, Warehouse, Snail, ArrowDownWideNarrow, Users, Calculator } from '@lucide/vue';
+import { BarChart3, TrendingUp, Warehouse, Snail, ArrowDownWideNarrow, Users, Calculator, UserRoundSearch, ShoppingBag, FileText } from '@lucide/vue';
 import PageHeader from '@/Components/PageHeader.vue';
 
 const reports = [
@@ -10,6 +10,9 @@ const reports = [
     { r: 'reports.valuation', icon: Warehouse, t: 'Stock valorizado', d: 'Cuánto dinero hay en mercadería, a costo y a precio de venta.' },
     { r: 'reports.no-rotation', icon: Snail, t: 'Productos sin rotación', d: 'Mercadería con stock que no se vendió en los últimos días: capital inmovilizado.' },
     { r: 'reports.low-margin', icon: ArrowDownWideNarrow, t: 'Bajo margen', d: 'Productos cuyo margen real está por debajo de un umbral.' },
+    { r: 'reports.purchases', icon: ShoppingBag, t: 'Compras', d: 'Por proveedor, rubro, marca, mes o producto. Variación de costos, facturas impagas y compras vs costo de lo vendido.' },
+    { r: 'reports.quotes', icon: FileText, t: 'Presupuestos', d: 'Tasa de cierre por vendedor, qué se presupuesta y no se vende, motivos de rechazo y los que vencen esta semana.' },
+    { r: 'reports.customers', icon: UserRoundSearch, t: 'Clientes', d: 'Ranking por compras y ganancia, clasificación ABC, frecuencia, clientes nuevos y los que dejaron de comprar.' },
     { r: 'reports.accounts', icon: Users, t: 'Cuentas corrientes', d: 'Antigüedad de deuda de clientes y saldos con proveedores.' },
 ];
 </script>

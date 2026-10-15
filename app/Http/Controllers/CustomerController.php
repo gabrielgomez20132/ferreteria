@@ -47,6 +47,7 @@ class CustomerController extends Controller
     {
         return Inertia::render('Customers/Show', [
             'customer' => $customer->load('priceList:id,name'),
+            'portal' => ['url' => $customer->portalUrl(), 'last_seen_at' => $customer->portal_last_seen_at?->toIso8601String()],
             'movements' => $customer->movements()->with('user:id,name')->latest()->latest('id')->paginate(30),
             'sales' => $customer->sales()->where('type', 'sale')->latest()->limit(10)->get(['id', 'number', 'total', 'status', 'created_at', 'branch_id']),
             'overdue' => (float) $customer->movements()->where('pending_amount', '>', 0)->where('due_date', '<', now()->toDateString())->sum('pending_amount'),
@@ -134,5 +135,21 @@ class CustomerController extends Controller
         });
 
         return back()->with('success', 'Ajuste registrado.');
+    }
+
+    /** Habilita el portal del cliente o regenera el link (el anterior deja de funcionar) */
+    public function enablePortal(Customer $customer)
+    {
+        $had = (bool) $customer->portal_token;
+        $customer->regeneratePortalToken();
+
+        return back()->with('success', $had ? 'Se generó un link nuevo. El anterior ya no funciona.' : 'Portal habilitado: compartí el link con el cliente.');
+    }
+
+    public function disablePortal(Customer $customer)
+    {
+        $customer->forceFill(['portal_token' => null])->save();
+
+        return back()->with('success', 'Portal deshabilitado: el link ya no funciona.');
     }
 }

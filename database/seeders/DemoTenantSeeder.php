@@ -207,6 +207,8 @@ class DemoTenantSeeder extends Seeder
         $cash = app(CashService::class);
         $sales = app(SaleService::class);
         $base = now()->copy();
+        $openQuotes = [];
+        $seller = User::where('tenant_id', $admin->tenant_id)->where('email', 'encargado@ferreteria.com')->first();
         for ($d = 60; $d >= 1; $d--) {
             $day = $base->copy()->subDays($d)->setTime(9, 0);
             if ($day->isSunday()) {
@@ -214,6 +216,39 @@ class DemoTenantSeeder extends Seeder
             }
             \Illuminate\Support\Carbon::setTestNow($day);
             $session = $cash->open($register, $admin, 50000);
+
+            // Presupuestos: algunos se convierten en venta a los pocos días
+            foreach ($openQuotes as $k => $q) {
+                $age = $q->created_at->copy()->startOfDay()->diffInDays($day->copy()->startOfDay());
+                if ($age >= 1 && $age <= 6 && mt_rand(1, 100) <= 22) {
+                    \Illuminate\Support\Carbon::setTestNow($day->copy()->addMinutes(15));
+                    try {
+                    $sales->create([
+                        'type' => 'sale', 'quote_id' => $q->id, 'customer_id' => $q->customer_id, 'price_list_id' => $q->price_list_id,
+                        'discount_percent' => (float) $q->discount_percent,
+                        'items' => $q->items->map(fn ($i) => ['product_id' => $i->product_id, 'quantity' => (float) $i->quantity, 'unit_price' => (float) $i->unit_price, 'discount_percent' => (float) $i->discount_percent])->all(),
+                        'payments' => [['method' => $q->customer?->allow_credit && mt_rand(0, 1) ? 'account' : 'transfer', 'amount' => (float) $q->total]],
+                    ], $admin);
+                    unset($openQuotes[$k]);
+                    } catch (\App\Support\BusinessException) {
+                    }
+                }
+            }
+            if (mt_rand(1, 10) <= 6) {
+                \Illuminate\Support\Carbon::setTestNow($day->copy()->addMinutes(20));
+                $lines = [];
+                foreach ((array) array_rand($products, mt_rand(2, 6)) as $idx) {
+                    $p = $products[$idx];
+                    $lines[] = ['product_id' => $p->id, 'quantity' => $p->allow_fraction ? mt_rand(5, 25) : mt_rand(1, 4)];
+                }
+                $qc = mt_rand(1, 10) > 3 ? $customers[mt_rand(0, 2)] : null;
+                try {
+                    $q = $sales->create(['type' => 'quote', 'customer_id' => $qc?->id, 'items' => $lines, 'discount_percent' => [0, 0, 5, 10][mt_rand(0, 3)], 'notes' => mt_rand(0, 1) ? 'Entrega en obra' : null], [$admin, $seller][mt_rand(0, 1)] ?? $admin);
+                    $openQuotes[] = $q->load('items', 'customer');
+                } catch (\App\Support\BusinessException) {
+                }
+            }
+
             $n = mt_rand(4, 12);
             for ($s = 0; $s < $n; $s++) {
                 \Illuminate\Support\Carbon::setTestNow($day->copy()->addMinutes(30 + $s * 40));
@@ -237,6 +272,14 @@ class DemoTenantSeeder extends Seeder
             $cash->close($session, $cash->expectedCash($session) + [0, 0, 0, -500, 200][mt_rand(0, 4)]);
         }
         \Illuminate\Support\Carbon::setTestNow();
+
+        // Algunos presupuestos que no se concretaron quedan rechazados con su motivo
+        $reasons = \App\Http\Controllers\QuoteController::REJECT_REASONS;
+        foreach ($openQuotes as $q) {
+            if ($q->created_at->lt($base->copy()->subDays(4)) && mt_rand(1, 100) <= 40) {
+                $q->update(['status' => 'rejected', 'rejected_at' => $q->created_at->copy()->addDays(mt_rand(2, 8)), 'reject_reason' => $reasons[mt_rand(0, count($reasons) - 2)]]);
+            }
+        }
 
         // Gastos operativos de los últimos 3 meses
         $expCats = \App\Models\ExpenseCategory::pluck('id', 'name');
@@ -377,5 +420,38 @@ class DemoTenantSeeder extends Seeder
             'lines' => [['method' => 'transfer', 'amount' => 60000, 'reference' => 'TRF 88213', 'bank' => 'Banco Nación'],
                 ['method' => 'check', 'amount' => 25000, 'reference' => '00451238', 'bank' => 'Banco Galicia', 'check_date' => now()->addDays(25)->toDateString()]],
         ]);
+
+        // ---------- Historial de compras (90 días) con costos en alza, para el reporte de compras ----------
+        foreach ($suppliers as $supplier) {
+            $prods = Product::where('supplier_id', $supplier->id)->where('type', 'simple')->inRandomOrder()->limit(10)->get();
+            if ($prods->isEmpty()) {
+                continue;
+            }
+            $n = 0;
+            foreach ([84, 63, 42, 21, 6] as $i => $days) {
+                $factor = [0.86, 0.9, 0.94, 0.97, 1.0][$i]; // los costos fueron subiendo
+                $items = $prods->shuffle()->take(mt_rand(3, 6))->map(fn ($pr) => [
+                    'product_id' => $pr->id, 'quantity' => $pr->allow_fraction ? mt_rand(5, 20) * 10 : max(1, min(60, (int) round(mt_rand(30, 150) * 1000 / max(1, (float) $pr->cost)))), 'unit_factor' => 1,
+                    'unit_cost' => round((float) $pr->cost * $factor, 2), 'discount_percent' => 0, 'vat_rate' => (float) $pr->vat_rate,
+                ])->values()->all();
+                \Illuminate\Support\Carbon::setTestNow(now()->subDays($days)->setTime(11, 0));
+                $ps->create([
+                    'supplier_id' => $supplier->id, 'voucher_type' => 'FA', 'voucher_number' => sprintf('0002-%08d', 4100 + $supplier->id * 100 + ++$n),
+                    'date' => now()->toDateString(), 'due_date' => now()->addDays((int) $supplier->payment_term_days)->toDateString(),
+                    'extra_costs' => mt_rand(0, 1) ? mt_rand(3, 12) * 1000 : 0,
+                    'update_costs' => false, 'price_action' => 'keep_price', 'items' => $items,
+                ]);
+                \Illuminate\Support\Carbon::setTestNow();
+            }
+            // Se pagó lo de hace más de 40 días
+            $old = \App\Models\Purchase::where('supplier_id', $supplier->id)->where('date', '<', now()->subDays(40)->toDateString())->get();
+            $due = round($old->sum(fn ($p) => (float) $p->total - (float) $p->paid_amount), 2);
+            if ($due > 0) {
+                app(\App\Services\PaymentOrderService::class)->create([
+                    'supplier_id' => $supplier->id, 'date' => now()->subDays(30)->toDateString(),
+                    'lines' => [['method' => 'transfer', 'amount' => $due, 'reference' => 'TRF '.mt_rand(10000, 99999), 'bank' => 'Banco Nación']],
+                ]);
+            }
+        }
     }
 }

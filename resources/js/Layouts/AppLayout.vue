@@ -5,7 +5,7 @@ import {
     LayoutDashboard, ShoppingCart, Receipt, Users, Wallet, Tags, FileSpreadsheet, AlertTriangle, Percent, Scale,
     History, Printer, Package, FolderTree, Upload, Boxes, PackageMinus, ArrowLeftRight, ClipboardCheck, Truck,
     ShoppingBag, ClipboardList, Lightbulb, BadgeDollarSign, BarChart3, Building2, Store, UserCog, ShieldCheck,
-    ScrollText, LogOut, Menu, X, ChevronDown, Server, CreditCard, Sliders, Factory, Banknote, Bell,
+    ScrollText, LogOut, Menu, X, ChevronDown, Server, CreditCard, Sliders, Factory, Banknote, Bell, FileText,
 } from '@lucide/vue';
 import { useCan } from '@/lib/can';
 import Toasts from '@/Components/Toasts.vue';
@@ -32,6 +32,7 @@ const sections = computed(() => {
         { title: 'Ventas', items: [
             { label: 'Punto de venta', href: route('pos'), icon: ShoppingCart, active: 'pos', perm: ['sales.create'], key: 'F2' },
             { label: 'Ventas', href: route('sales.index'), icon: Receipt, active: 'sales.*', perm: ['sales.view'] },
+            { label: 'Presupuestos', href: route('quotes.index'), icon: FileText, active: 'quotes.*', perm: ['sales.view', 'sales.create'] },
             { label: 'Clientes', href: route('customers.index'), icon: Users, active: 'customers.*', perm: ['customers.view'] },
             { label: 'Caja', href: route('cash.index'), icon: Wallet, active: 'cash.*', perm: ['cash.operate', 'cash.manage'] },
         ] },

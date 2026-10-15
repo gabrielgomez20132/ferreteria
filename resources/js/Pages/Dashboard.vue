@@ -21,6 +21,8 @@ const alerts = computed(() => [
     props.stats.low_stock && { text: `${props.stats.low_stock} productos en o por debajo del stock mínimo`, href: route('stock.low'), perm: 'stock.view' },
     props.stats.over_stock && { text: `${props.stats.over_stock} productos superan su stock máximo (sobrestock)`, href: route('stock.low', { mode: 'over' }), perm: 'stock.view' },
     props.stats.pending_production && { text: `${props.stats.pending_production} órdenes de producción pendientes`, href: route('stock.production.index', { status: 'pending' }), perm: 'production.manage' },
+    props.stats.quotes_expiring && { text: `${props.stats.quotes_expiring} presupuestos vencen en los próximos 3 días: buen momento para llamar`, href: route('reports.quotes'), perm: 'reports.view' },
+    props.stats.payables_overdue > 0 && { text: `Facturas de proveedores vencidas por ${money(props.stats.payables_overdue)}`, href: route('reports.purchases'), perm: 'reports.view' },
     props.stats.overdue_customers && { text: `${props.stats.overdue_customers} clientes con deuda vencida`, href: route('customers.index', { overdue: 1 }), perm: 'customers.view' },
     ...props.incomingTransfers.map((t) => ({ text: `Transferencia #${t.number} en camino desde ${t.from_branch.name}`, href: route('stock.transfers.show', t.id), perm: 'stock.transfer' })),
 ].filter((a) => a && can(a.perm)));
@@ -59,6 +61,31 @@ const alerts = computed(() => [
             <div class="mt-1 text-base font-semibold tabular-nums">A cobrar {{ money(stats.receivables) }}</div>
             <div class="text-base font-semibold tabular-nums text-steel-600">A pagar {{ money(stats.payables) }}</div>
         </div>
+    </div>
+
+    <div class="mb-4 grid gap-3 md:grid-cols-2">
+        <Link v-if="can('sales.view') || can('sales.create')" :href="route('quotes.index')" class="panel flex items-center justify-between gap-4 p-4 hover:border-steel-400">
+            <div>
+                <div class="text-sm text-steel-500">Presupuestos vigentes</div>
+                <div class="mt-1 text-xl font-semibold tabular-nums">{{ money(stats.quotes_pending_amount) }}</div>
+                <div class="text-xs text-steel-500">
+                    {{ stats.quotes_pending }} abiertos<span v-if="stats.quotes_expiring" class="text-[#7a5b00]"> · {{ stats.quotes_expiring }} vencen en 3 días</span>
+                </div>
+            </div>
+            <div class="text-right text-xs text-steel-500">
+                Este mes<div class="text-base font-semibold text-steel-900">{{ stats.quotes_month_converted }}/{{ stats.quotes_month }}</div>convertidos
+            </div>
+        </Link>
+        <Link v-if="can('purchases.view')" :href="can('reports.view') ? route('reports.purchases') : route('purchases.index')" class="panel flex items-center justify-between gap-4 p-4 hover:border-steel-400">
+            <div>
+                <div class="text-sm text-steel-500">Compras del mes</div>
+                <div class="mt-1 text-xl font-semibold tabular-nums">{{ money(stats.purchases_month) }}</div>
+                <div class="text-xs text-steel-500">{{ stats.purchases_month_count }} facturas</div>
+            </div>
+            <div class="text-right text-xs text-steel-500">
+                Vencido a proveedores<div class="text-base font-semibold" :class="stats.payables_overdue > 0 ? 'text-up' : 'text-steel-900'">{{ money(stats.payables_overdue) }}</div>
+            </div>
+        </Link>
     </div>
 
     <div v-if="alerts.length" class="mb-4 space-y-1.5">

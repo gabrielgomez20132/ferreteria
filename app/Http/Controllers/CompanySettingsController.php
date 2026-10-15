@@ -41,6 +41,8 @@ class CompanySettingsController extends Controller
             'settings.ticket_header' => ['nullable', 'string', 'max:500'],
             'settings.ticket_footer' => ['nullable', 'string', 'max:500'],
             'settings.cost_update_policy' => ['required', Rule::in(['always', 'main_supplier', 'best_cost'])],
+            'settings.quote_validity_days' => ['required', 'integer', 'min:1', 'max:365'],
+            'settings.quote_terms' => ['nullable', 'string', 'max:1000'],
             'settings.default_price_action' => ['required', Rule::in(array_keys(PricingService::PRICE_ACTIONS))],
         ]);
         $settings = array_merge(Tenant::DEFAULT_SETTINGS, $ctx->tenant->settings ?? [], $data['settings']);

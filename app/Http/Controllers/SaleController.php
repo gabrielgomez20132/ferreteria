@@ -16,6 +16,9 @@ class SaleController extends Controller
 {
     public function index(Request $request, TenantContext $ctx)
     {
+        if ($request->input('type') === 'quote') {
+            return redirect()->route('quotes.index');
+        }
         $filters = $request->only(['search', 'from', 'to', 'status', 'type', 'user_id', 'branch_id', 'method']);
         $q = Sale::with('customer:id,name', 'user:id,name', 'branch:id,name', 'payments')
             ->when($filters['branch_id'] ?? $ctx->branchId(), fn ($q, $b) => $b === 'all' ? $q : $q->where('branch_id', $b))
@@ -41,8 +44,11 @@ class SaleController extends Controller
 
     public function show(Sale $sale)
     {
+        if ($sale->type === 'quote') {
+            return redirect()->route('quotes.show', $sale);
+        }
         return Inertia::render('Sales/Show', [
-            'sale' => $sale->load('customer', 'user:id,name', 'branch:id,name', 'items', 'payments', 'returns.items', 'returns.user:id,name', 'canceller:id,name', 'priceList:id,name'),
+            'sale' => $sale->load('customer', 'user:id,name', 'branch:id,name', 'items', 'payments', 'returns.items', 'returns.user:id,name', 'canceller:id,name', 'priceList:id,name', 'quote:id,number'),
             'methods' => CashService::METHODS,
         ]);
     }

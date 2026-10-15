@@ -7,10 +7,10 @@ import Modal from '@/Components/Modal.vue';
 import TicketModal from '@/Components/TicketModal.vue';
 import Field from '@/Components/Field.vue';
 import { getJson, postJson } from '@/lib/http';
-import { money, qty as fmtQty, round2, toNum } from '@/lib/format';
+import { money, qty as fmtQty, round2, toNum, date } from '@/lib/format';
 import { useCan } from '@/lib/can';
 
-const props = defineProps({ priceLists: Array, methods: Object, session: Object, requireSession: Boolean, consumidorFinal: Object, quote: Object, lastSale: Object });
+const props = defineProps({ priceLists: Array, methods: Object, session: Object, requireSession: Boolean, consumidorFinal: Object, quote: Object, quoteMode: String, lastSale: Object });
 const page = usePage();
 const can = useCan();
 const maxDiscount = computed(() => toNum(page.props.auth.user.max_discount));
@@ -95,7 +95,9 @@ async function createCustomer() {
 
 // Al cambiar de lista se vuelven a cotizar los ítems
 watch(priceListId, async (id) => {
+    if (loadingQuote.value) return; // al cargar un presupuesto los precios se fijan abajo
     for (const i of items.value) {
+        if (i._quotedPrice !== undefined && honorPrices.value) continue; // precio comprometido en el presupuesto
         const r = await getJson(route('products.search'), { q: i.code, price_list_id: id });
         const p = r.items.find((x) => x.id === i.product_id);
         if (p) {
@@ -106,20 +108,45 @@ watch(priceListId, async (id) => {
 });
 
 // ---------- Presupuesto cargado ----------
+// convert: se cobra (respeta los precios si está vigente) · edit: se modifica · copy: se duplica con precios actuales
+const quoteMode = ref(props.quote ? props.quoteMode : null);
+const quoteValid = computed(() => props.quote && props.quote.quote_state === 'pending');
+const honorPrices = computed(() => !!quoteMode.value && quoteMode.value !== 'copy' && quoteValid.value);
+const repriced = ref([]); // productos cuyo precio actual difiere del presupuestado
+const loadingQuote = ref(false);
 onMounted(async () => {
     if (props.quote) {
+        loadingQuote.value = true;
         if (props.quote.customer) setCustomer(props.quote.customer);
-        for (const it of props.quote.items) {
+        if (props.quote.price_list_id) priceListId.value = props.quote.price_list_id;
+        if (quoteMode.value === 'edit') notes.value = props.quote.notes ?? '';
+        if (honorPrices.value) globalDiscount.value = toNum(props.quote.discount_percent);
+        for (const it of [...props.quote.items].reverse()) {
             const r = await getJson(route('products.search'), { q: it.code, price_list_id: priceListId.value });
             const p = r.items.find((x) => x.id === it.product_id);
-            if (p) {
-                addProduct(p);
-                items.value[0].quantity = toNum(it.quantity);
-                items.value[0].discount_percent = toNum(it.discount_percent);
+            if (!p) continue;
+            addProduct(p);
+            const line = items.value[0];
+            line.quantity = toNum(it.quantity);
+            if (Math.abs(toNum(p.price) - toNum(it.unit_price)) > 0.009) repriced.value.push({ name: p.name, quoted: toNum(it.unit_price), now: toNum(p.price) });
+            if (honorPrices.value) {
+                line.unit_price = toNum(it.unit_price);
+                line.discount_percent = toNum(it.discount_percent);
+                line._quotedPrice = toNum(it.unit_price);
+                line._quotedDisc = toNum(it.discount_percent);
             }
         }
+        loadingQuote.value = false;
     }
     search.value?.focus();
+});
+const leaveQuote = () => router.visit(route('pos'));
+const quoteBanner = computed(() => {
+    if (!props.quote) return '';
+    const n = `#${props.quote.number}`;
+    if (quoteMode.value === 'edit') return `Editando el presupuesto ${n}`;
+    if (quoteMode.value === 'copy') return `Nuevo presupuesto copiado del ${n} (con precios actuales)`;
+    return `Cobrando el presupuesto ${n}`;
 });
 
 // ---------- Confirmar ----------
@@ -130,30 +157,48 @@ const errors = computed(() => {
     for (const i of items.value) {
         if (toNum(i.quantity) <= 0) e.push(`Cantidad inválida en ${i.name}`);
         if (!i.allow_fraction && !Number.isInteger(toNum(i.quantity))) e.push(`${i.name} no se vende fraccionado`);
-        if (toNum(i.discount_percent) > maxDiscount.value) e.push(`Descuento máximo ${maxDiscount.value}%`);
+        if (toNum(i.discount_percent) > maxDiscount.value && toNum(i.discount_percent) !== i._quotedDisc) e.push(`Descuento máximo ${maxDiscount.value}%`);
     }
-    if (toNum(globalDiscount.value) > maxDiscount.value) e.push(`Descuento máximo ${maxDiscount.value}%`);
+    if (toNum(globalDiscount.value) > maxDiscount.value && !(honorPrices.value && toNum(globalDiscount.value) === toNum(props.quote.discount_percent))) e.push(`Descuento máximo ${maxDiscount.value}%`);
     if (missing.value > 0) e.push(`Faltan ${money(missing.value)}`);
     if (change.value > cashPaid.value + 0.001) e.push('El vuelto solo puede salir del efectivo');
     if (payments.value.some((p) => p.method === 'account') && !customer.value) e.push('Elegí un cliente para cuenta corriente');
     return [...new Set(e)];
 });
 
+const lineItems = () =>
+    items.value.map((i) => ({
+        product_id: i.product_id, quantity: toNum(i.quantity), discount_percent: toNum(i.discount_percent),
+        unit_price: (canOverride.value || toNum(i.unit_price) === i._quotedPrice) && toNum(i.unit_price) !== toNum(i.list_price) ? toNum(i.unit_price) : null,
+    }));
+
+// Editar presupuesto: guarda los cambios sobre el mismo número
+function saveQuoteChanges() {
+    if (!items.value.length) return;
+    processing.value = true;
+    router.put(route('quotes.update', props.quote.id), {
+        customer_id: customer.value?.id ?? null,
+        price_list_id: priceListId.value,
+        discount_percent: toNum(globalDiscount.value),
+        notes: notes.value || props.quote.notes,
+        items: lineItems(),
+    }, { onFinish: () => (processing.value = false) });
+}
+
 function submit(type = 'sale') {
     if (type === 'sale' && errors.value.length) return;
     if (type === 'quote' && !items.value.length) return;
+    if (type === 'quote' && quoteMode.value === 'edit') return saveQuoteChanges();
     processing.value = true;
     router.post(route('pos.store'), {
         type,
         voucher_type: type === 'sale' ? voucherType.value : null,
+        quote_id: type === 'sale' && props.quote && quoteMode.value !== 'copy' ? props.quote.id : null,
         customer_id: customer.value?.id ?? null,
         price_list_id: priceListId.value,
         discount_percent: toNum(globalDiscount.value),
         notes: notes.value,
-        items: items.value.map((i) => ({
-            product_id: i.product_id, quantity: toNum(i.quantity), discount_percent: toNum(i.discount_percent),
-            unit_price: canOverride.value && toNum(i.unit_price) !== toNum(i.list_price) ? toNum(i.unit_price) : null,
-        })),
+        items: lineItems(),
         payments: type === 'sale' ? payments.value.filter((p) => toNum(p.amount) > 0) : [],
     }, {
         preserveScroll: true,
@@ -163,6 +208,12 @@ function submit(type = 'sale') {
                 lastSale.value = p.props.lastSale;
                 if (lastSale.value) ticketFor.value = lastSale.value; // abre el pop-up del comprobante
                 reset();
+                if (quoteMode.value) {
+                    // se terminó de usar el presupuesto: la URL vuelve al POS limpio
+                    quoteMode.value = null;
+                    repriced.value = [];
+                    window.history.replaceState({}, '', route('pos'));
+                }
             }
         },
         onFinish: () => (processing.value = false),
@@ -206,10 +257,27 @@ const openTicket = () => (ticketFor.value = lastSale.value);
                 <Link :href="route('cash.index')" class="link font-medium">Abrir caja</Link>
             </div>
             <div v-if="lastSale" class="mb-3 flex flex-wrap items-center gap-3 rounded-md border border-down/30 bg-down-bg px-3 py-2 text-sm">
-                <span class="font-medium text-down">{{ lastSale.type === 'quote' ? 'Presupuesto' : 'Venta' }} #{{ lastSale.number }} registrada · {{ money(lastSale.total) }}</span>
+                <span class="font-medium text-down">{{ lastSale.type === 'quote' ? 'Presupuesto #' + lastSale.number + ' guardado' : 'Venta #' + lastSale.number + ' registrada' }} · {{ money(lastSale.total) }}</span>
+                <Link v-if="lastSale.type === 'quote'" :href="route('quotes.show', lastSale.id)" class="btn-primary btn-sm">Abrir presupuesto: PDF / WhatsApp</Link>
                 <span v-if="lastSale.change > 0" class="font-semibold">Vuelto: {{ money(lastSale.change) }}</span>
                 <button class="btn-secondary btn-sm ml-auto" @click="openTicket"><Printer class="size-3.5" /> Ver comprobante</button>
                 <button class="text-steel-500" @click="lastSale = null" aria-label="Ocultar"><X class="size-4" /></button>
+            </div>
+
+            <div v-if="quoteMode && props.quote" class="mb-3 rounded-md border border-link/30 bg-[#eef4fa] px-3 py-2 text-sm">
+                <div class="flex flex-wrap items-center gap-2">
+                    <FileText class="size-4 text-link" />
+                    <span class="font-medium text-link">{{ quoteBanner }}</span>
+                    <span v-if="quoteMode !== 'copy' && props.quote.valid_until" class="text-steel-600">
+                        · {{ quoteValid ? 'vigente hasta el ' + date(props.quote.valid_until) + ': se respetan los precios presupuestados' : 'vencido el ' + date(props.quote.valid_until) + ': se cobra con precios actuales' }}
+                    </span>
+                    <span v-if="loadingQuote" class="text-steel-500">cargando…</span>
+                    <button class="btn-ghost btn-sm ml-auto" @click="leaveQuote">Salir</button>
+                </div>
+                <details v-if="repriced.length && quoteMode !== 'edit'" class="mt-1 text-xs text-steel-600">
+                    <summary class="cursor-pointer">{{ repriced.length }} {{ repriced.length === 1 ? 'producto cambió' : 'productos cambiaron' }} de precio desde el presupuesto</summary>
+                    <div v-for="r in repriced" :key="r.name" class="flex justify-between gap-3 py-0.5"><span>{{ r.name }}</span><span class="tabular-nums">{{ money(r.quoted) }} → <b>{{ money(r.now) }}</b></span></div>
+                </details>
             </div>
 
             <div class="flex gap-2">
@@ -330,7 +398,9 @@ const openTicket = () => (ticketFor.value = lastSale.value);
                     Cobrar {{ money(total) }} <kbd class="ml-1 rounded border border-steel-900/20 px-1 text-[10px]">F9</kbd>
                 </button>
                 <div class="flex gap-2">
-                    <button class="btn-secondary flex-1" :disabled="processing || !items.length" @click="submit('quote')"><FileText class="size-4" /> Guardar presupuesto</button>
+                    <button class="btn-secondary flex-1" :disabled="processing || !items.length" @click="submit('quote')">
+                        <FileText class="size-4" /> {{ quoteMode === 'edit' && props.quote ? 'Guardar cambios del presupuesto' : 'Guardar presupuesto' }}
+                    </button>
                     <button class="btn-ghost" :disabled="!items.length" @click="reset">Vaciar</button>
                 </div>
             </div>
@@ -353,7 +423,7 @@ const openTicket = () => (ticketFor.value = lastSale.value);
 
     <TicketModal
         :sale-id="ticketFor?.id ?? null" :change="ticketFor?.change ?? 0"
-        :title="ticketFor ? `${ticketFor.type === 'quote' ? 'Presupuesto' : 'Venta'} #${ticketFor.number} registrada` : ''"
+        :title="ticketFor ? (ticketFor.type === 'quote' ? `Presupuesto #${ticketFor.number} guardado` : `Venta #${ticketFor.number} registrada`) : ''"
         @close="ticketFor = null; search?.focus()"
     />
 </template>
